@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+target="x86_64-unknown-uefi"
+output="${1:-$root/target/EFI/BOOT/BOOTX64.EFI}"
+
+cargo build --release --target "$target"
+mkdir -p "$(dirname -- "$output")"
+cp "$root/target/$target/release/r-boot.efi" "$output"
+
+printf 'EFI application written to %s\n' "$output"

@@ -11,6 +11,8 @@ r-boot developer commands
                               lint the UEFI application
   cargo build --release --target x86_64-unknown-uefi
                               build EFI/BOOT/BOOTX64.EFI source image
+  ./build-efi.sh [output-path]
+                              build and copy BOOTX64.EFI (default: target/EFI/BOOT/)
   RBOOT_KERNEL=/path/kernel.elf ./run-qemu.sh
                               build an ESP and boot a Limine-compatible ELF
   RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu.sh
