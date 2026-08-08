@@ -4,11 +4,11 @@ set -euo pipefail
 # Download a small Alpine netboot kernel + initramfs, create an ESP, then
 # exercise r-boot's Linux x86 EFI 64-bit handover path.
 
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-linux-qemu"
 mirror="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot}"
 
-"$root/build-efi.sh"
+"$root/scripts/build-efi"
 rm -rf "$build"
 mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
 curl --fail --location --output "$build/vmlinuz" "$mirror/vmlinuz-virt"

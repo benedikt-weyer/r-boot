@@ -5,7 +5,7 @@ set -euo pipefail
 # A normal Linux bzImage is not a Limine-protocol executable; pass the
 # compatible kernel/ISO payload supplied for this project through RBOOT_KERNEL.
 
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-qemu"
 kernel="${RBOOT_KERNEL:-}"
 

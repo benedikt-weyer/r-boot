@@ -11,13 +11,13 @@ r-boot developer commands
                               lint the UEFI application
   cargo build --release --target x86_64-unknown-uefi
                               build EFI/BOOT/BOOTX64.EFI source image
-  ./build-efi.sh [output-path]
+  ./build-efi [output-path]
                               build and copy BOOTX64.EFI (default: target/EFI/BOOT/)
-  RBOOT_KERNEL=/path/kernel.elf ./run-qemu.sh
+  RBOOT_KERNEL=/path/kernel.elf ./run-qemu
                               build an ESP and boot a Limine-compatible ELF
-  RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu.sh
+  RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu
                               download a compatible ELF then boot it
-  ./run-linux-qemu.sh          download Alpine netboot and test Linux handover
+  ./run-linux-qemu             download Alpine netboot and test Linux handover
 
 This is a Limine boot-protocol loader. Ordinary Linux bzImage, vmlinuz, and
 distribution ISO images use the Linux boot protocol. r-boot supports its
