@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Boot a Limine-protocol ELF payload in an OVMF QEMU guest.
+# A normal Linux bzImage is not a Limine-protocol executable; pass the
+# compatible kernel/ISO payload supplied for this project through RBOOT_KERNEL.
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+build="$root/target/r-boot-qemu"
+kernel="${RBOOT_KERNEL:-}"
+
+if [[ -z "$kernel" && -n "${RBOOT_KERNEL_URL:-}" ]]; then
+  mkdir -p "$build"
+  kernel="$build/kernel.elf"
+  curl --fail --location --output "$kernel" "$RBOOT_KERNEL_URL"
+fi
+if [[ -z "$kernel" || ! -f "$kernel" ]]; then
+  printf 'Set RBOOT_KERNEL to a Limine-compatible x86_64 ELF, or RBOOT_KERNEL_URL to its direct download URL.\n' >&2
+  exit 2
+fi
+
+cargo build --release --target x86_64-unknown-uefi
+rm -rf "$build"
+mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
+cp "$root/target/x86_64-unknown-uefi/release/r-boot.efi" "$build/esp/EFI/BOOT/BOOTX64.EFI"
+cp "$kernel" "$build/esp/boot/kernel.elf"
+truncate -s 64M "$build/esp.img"
+mkfs.fat -F 32 "$build/esp.img" >/dev/null
+mmd -i "$build/esp.img" ::EFI ::EFI/BOOT ::boot
+mcopy -i "$build/esp.img" "$build/esp/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
+mcopy -i "$build/esp.img" "$build/esp/boot/kernel.elf" ::boot/kernel.elf
+
+ovmf_code="${OVMF_CODE:-}"
+if [[ -z "$ovmf_code" || ! -f "$ovmf_code" ]]; then
+  printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
+  exit 2
+fi
+
+qemu-system-x86_64 \
+  -machine q35 -m 256M -cpu qemu64 \
+  -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
+  -drive format=raw,file="$build/esp.img" \
+  -debugcon stdio -global isa-debugcon.iobase=0x402 \
+  -no-reboot

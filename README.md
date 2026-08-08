@@ -1,2 +1,48 @@
 # r-boot
-Rust based multi protocol uefi bootloader
+
+`r-boot` is a Rust UEFI bootloader. Its first backend implements the Limine
+boot protocol for x86_64 higher-half, `ET_EXEC` ELF kernels. The protocol
+boundary is [`src/protocol.rs`](src/protocol.rs); later backends can implement
+the same `BootProtocol` trait without changing the UEFI file-loading or paging
+code.
+
+There is no C source and the only assembly is one inline `mov cr3` needed to
+install page tables before entering a higher-half kernel. Rust has no stable
+replacement for that privileged instruction.
+
+## Current Limine subset
+
+The initial backend is intentionally small. It supports base revision 0 and
+the bootloader-info, firmware-type (UEFI x86_64), HHDM, and executable-address
+requests. Unsupported requests are left with a null response as the Limine
+protocol requires. It maps the first 4 GiB both identity-mapped and at the
+HHDM offset, which is sufficient for the default 256 MiB QEMU test machine.
+
+This is not a Linux boot-protocol loader: standard `bzImage`, `vmlinuz`, and
+distribution ISO files cannot be used as `kernel.elf`. Provide a
+Limine-compatible ELF when available.
+
+## Development
+
+```sh
+direnv allow
+nix develop
+./help.sh
+```
+
+Build the UEFI executable:
+
+```sh
+cargo build --release --target x86_64-unknown-uefi
+```
+
+Run it in QEMU with a Limine-compatible kernel:
+
+```sh
+RBOOT_KERNEL=/path/to/kernel.elf ./run-qemu.sh
+# or a direct artifact URL:
+RBOOT_KERNEL_URL=https://example.invalid/kernel.elf ./run-qemu.sh
+```
+
+The runner builds a FAT ESP containing `EFI/BOOT/BOOTX64.EFI` and
+`boot/kernel.elf`, starts OVMF, and exposes serial/debug-console output.
