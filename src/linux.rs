@@ -18,7 +18,7 @@ const MIN_PROTOCOL_VERSION: u16 = 0x020b;
 const XLF_EFI_HANDOVER_64: u16 = 1 << 3;
 const BOOT_PARAMS_SIZE: usize = 4096;
 const PAGE_SIZE: usize = 4096;
-const CMDLINE: &[u8] = b"console=ttyS0\0";
+const CMDLINE: &[u8] = b"console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt\0";
 
 // Offsets are from the start of the bzImage, and are therefore also offsets
 // into the boot_params zero page after copying the setup header there.
