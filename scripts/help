@@ -17,7 +17,9 @@ r-boot developer commands
                               build an ESP and boot a Limine-compatible ELF
   RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu.sh
                               download a compatible ELF then boot it
+  ./run-linux-qemu.sh          download Alpine netboot and test Linux handover
 
 This is a Limine boot-protocol loader. Ordinary Linux bzImage, vmlinuz, and
-distribution ISO images use the Linux boot protocol and will be rejected.
+distribution ISO images use the Linux boot protocol. r-boot supports its
+64-bit EFI handover entry at \boot\vmlinuz with \boot\initramfs.
 EOF

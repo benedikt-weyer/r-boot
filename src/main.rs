@@ -5,6 +5,7 @@ extern crate alloc;
 
 mod elf;
 mod limine;
+mod linux;
 mod paging;
 mod protocol;
 
@@ -22,7 +23,7 @@ const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().expect("UEFI helpers must initialize");
-    log::info!("r-boot: loading \\boot\\kernel.elf");
+    log::info!("r-boot: selecting boot protocol");
 
     match boot_kernel() {
         Ok(never) => match never {},
@@ -37,6 +38,13 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     let image = boot::image_handle();
     let fs = boot::get_image_file_system(image).map_err(|_| "cannot open boot volume")?;
     let mut fs = FileSystem::new(fs);
+    if let Ok(kernel) = fs.read(Path::new(cstr16!("\\boot\\vmlinuz"))) {
+        let initramfs = fs
+            .read(Path::new(cstr16!("\\boot\\initramfs")))
+            .map_err(|_| "cannot read \\boot\\initramfs")?;
+        drop(fs);
+        return linux::handover(image, &kernel, &initramfs);
+    }
     let bytes = fs
         .read(Path::new(cstr16!("\\boot\\kernel.elf")))
         .map_err(|_| "cannot read \\boot\\kernel.elf")?;

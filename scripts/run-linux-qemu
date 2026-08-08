@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Download a small Alpine netboot kernel + initramfs, create an ESP, then
+# exercise r-boot's Linux x86 EFI 64-bit handover path.
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+build="$root/target/r-boot-linux-qemu"
+mirror="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot}"
+
+"$root/build-efi.sh"
+rm -rf "$build"
+mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
+curl --fail --location --output "$build/vmlinuz" "$mirror/vmlinuz-virt"
+curl --fail --location --output "$build/initramfs" "$mirror/initramfs-virt"
+cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
+cp "$build/vmlinuz" "$build/esp/boot/vmlinuz"
+cp "$build/initramfs" "$build/esp/boot/initramfs"
+
+truncate -s 64M "$build/esp.img"
+mkfs.fat -F 32 "$build/esp.img" >/dev/null
+mmd -i "$build/esp.img" ::EFI ::EFI/BOOT ::boot
+mcopy -i "$build/esp.img" "$build/esp/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
+mcopy -i "$build/esp.img" "$build/esp/boot/vmlinuz" ::boot/vmlinuz
+mcopy -i "$build/esp.img" "$build/esp/boot/initramfs" ::boot/initramfs
+
+if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
+  printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
+  exit 2
+fi
+
+qemu-system-x86_64 \
+  -machine q35 -m 512M -cpu qemu64 \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive format=raw,file="$build/esp.img" \
+  -serial stdio \
+  -no-reboot
