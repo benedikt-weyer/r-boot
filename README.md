@@ -77,6 +77,39 @@ GRUB entries support `menuentry`, `--id=`, `linux`/`linuxefi`, and
 read. GRUB scripts with variable expansion, conditionals, generated
 submenus, chainloading, or non-Linux commands are intentionally ignored.
 
+## NixOS
+
+This repository is a flake exposing `packages.x86_64-linux.default` (the
+`BOOTX64.EFI` binary) and `nixosModules.default`, a `boot.loader.r-boot`
+implementation. Add it as an input to a NixOS system flake:
+
+```nix
+{
+  inputs.r-boot.url = "github:benedikt-weyer/r-boot";
+
+  outputs = { nixpkgs, r-boot, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        r-boot.nixosModules.default
+        {
+          boot.loader.r-boot.enable = true;
+          boot.loader.efi.canTouchEfiVariables = true;
+        }
+      ];
+    };
+  };
+}
+```
+
+`boot.loader.r-boot` cannot be combined with `boot.loader.grub` or
+`boot.loader.systemd-boot`. On activation it writes `boot/r-boot.toml`
+listing the current generation plus up to
+`boot.loader.r-boot.configurationLimit` older ones (default 20), copies
+their kernels/initrds into `boot/nixos` on the ESP, and installs the r-boot
+binary to `EFI/BOOT/BOOTX64.EFI`. With `boot.loader.efi.canTouchEfiVariables`
+it also registers a `r-boot` NVRAM boot entry via `efibootmgr`.
+
 ## References
 
 Authoritative Limine, Linux boot-protocol, UEFI, EFI API, and Rust UEFI links
