@@ -1,0 +1,10 @@
+default = "nixos-min"
+timeout = 5
+
+[[entries]]
+id = "nixos-min"
+title = "NixOS (minimal netboot)"
+kind = "linux"
+linux = "/boot/vmlinuz"
+initrd = "/boot/initramfs"
+options = "console=ttyS0 @OPTIONS@"

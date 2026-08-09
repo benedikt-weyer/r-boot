@@ -42,26 +42,8 @@ fi
 cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$build/vmlinuz" "$build/esp/boot/vmlinuz"
 cp "$build/initramfs" "$build/esp/boot/initramfs"
-cat >"$build/r-boot.toml" <<EOF
-default = "alpine"
-timeout = 5
-
-[[entries]]
-id = "alpine"
-title = "Alpine Linux"
-kind = "linux"
-linux = "/boot/vmlinuz"
-initrd = "/boot/initramfs"
-options = "console=ttyS0 modules=loop,squashfs alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
-
-[[entries]]
-id = "alpine-debug"
-title = "Alpine Linux (debug)"
-kind = "linux"
-linux = "/boot/vmlinuz"
-initrd = "/boot/initramfs"
-options = "console=ttyS0 loglevel=7 modules=loop,squashfs alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
-EOF
+tmpl="$(<"$root/scripts/r-boot-alpine.toml.tmpl")"
+printf '%s\n' "${tmpl//@PROXY_PORT@/$proxy_port}" >"$build/r-boot.toml"
 
 truncate -s 64M "$build/esp.img"
 mkfs.fat -F 32 "$build/esp.img" >/dev/null

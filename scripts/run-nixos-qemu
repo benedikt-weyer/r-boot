@@ -35,18 +35,8 @@ fi
 cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$cache/bzImage" "$build/esp/boot/vmlinuz"
 cp "$cache/initrd" "$build/esp/boot/initramfs"
-cat >"$build/r-boot.toml" <<EOF
-default = "nixos-min"
-timeout = 5
-
-[[entries]]
-id = "nixos-min"
-title = "NixOS (minimal netboot)"
-kind = "linux"
-linux = "/boot/vmlinuz"
-initrd = "/boot/initramfs"
-options = "console=ttyS0 $options"
-EOF
+tmpl="$(<"$root/scripts/r-boot-nixos.toml.tmpl")"
+printf '%s\n' "${tmpl//@OPTIONS@/$options}" >"$build/r-boot.toml"
 
 truncate -s 768M "$build/esp.img"
 mkfs.fat -F 32 "$build/esp.img" >/dev/null
