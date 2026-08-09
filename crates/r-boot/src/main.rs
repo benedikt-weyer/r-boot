@@ -27,6 +27,9 @@ const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().expect("UEFI helpers must initialize");
+    uefi::system::with_stdout(|output| {
+        let _ = output.clear();
+    });
     log::info!("r-boot: selecting boot protocol");
 
     match boot_kernel() {
@@ -49,8 +52,10 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     spinner.set_mode(menu.spinner_mode());
     if !menu.entries.is_empty() {
         let selected = menu.select(&mut fs)?;
+        menu.clear();
         spinner.set_mode(menu.spinner_mode());
         let entry = menu.entries.swap_remove(selected);
+        uefi::println!("Booting {}...", entry.title);
         return match entry.kind {
             menu::Kind::Linux => {
                 let kernel_path = menu::path(&entry.kernel)?;

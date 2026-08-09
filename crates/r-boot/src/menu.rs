@@ -63,6 +63,13 @@ impl Menu {
         self.spinner_mode
     }
 
+    /// Removes the menu before boot progress is displayed.
+    pub fn clear(&self) {
+        system::with_stdout(|output| {
+            let _ = output.clear();
+        });
+    }
+
     pub fn select(&mut self, fs: &mut FileSystem) -> Result<usize, &'static str> {
         if self.entries.is_empty() {
             return Err("no boot entries found");
@@ -223,9 +230,7 @@ impl Menu {
     }
 
     fn draw(&self, selected: usize, remaining: Option<u64>, logo: Option<&bgrt::Logo>) {
-        system::with_stdout(|output| {
-            let _ = output.clear();
-        });
+        self.clear();
         if let Some(logo) = logo {
             draw_logo(logo);
         }

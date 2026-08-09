@@ -30,8 +30,6 @@ const DOTS: [(i32, i32); 12] = [
 const BACKGROUND: BltPixel = BltPixel::new(0, 0, 0);
 const INACTIVE: BltPixel = BltPixel::new(48, 48, 48);
 const ACTIVE: BltPixel = BltPixel::new(255, 255, 255);
-const TEXT_WIDTH: usize = 60;
-const BLANK_TEXT: &str = "                                                            ";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Mode {
@@ -105,11 +103,7 @@ impl Spinner {
             Mode::Off => {}
             Mode::Text => {
                 const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
-                uefi::print!(
-                    "\r{}\r{} {label}",
-                    &BLANK_TEXT[..TEXT_WIDTH],
-                    FRAMES[self.index]
-                );
+                uefi::println!("{} {label}", FRAMES[self.index]);
                 self.index = (self.index + 1) % FRAMES.len();
             }
             Mode::Graphical => self.tick_graphical(),
@@ -143,7 +137,6 @@ impl Spinner {
     /// Erases the spinner's dirty rectangle without reading the framebuffer.
     pub fn clear(&mut self) {
         if self.mode == Mode::Text {
-            uefi::print!("\r{}\r", &BLANK_TEXT[..TEXT_WIDTH]);
             return;
         }
         let Some(position) = self.last_position else {
