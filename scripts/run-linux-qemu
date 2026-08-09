@@ -21,9 +21,10 @@ cp "$cache/alpine-netboot/vmlinuz-virt" "$build/vmlinuz"
 cp "$cache/alpine-netboot/initramfs-virt" "$build/initramfs"
 
 # The guest itself fetches the modloop image and ~28 apk packages over the
-# network at boot (ip=dhcp + alpine_repo/modloop). Proxy those through a
-# local caching server so repeat runs don't re-download from the real
-# Alpine CDN. QEMU usermode networking maps 10.0.2.2 to the host.
+# network at boot (alpine_repo/modloop; Alpine's init script DHCPs eth0 on
+# its own). Proxy those through a local caching server so repeat runs don't
+# re-download from the real Alpine CDN. QEMU usermode networking maps
+# 10.0.2.2 to the host.
 proxy_port_file="$build/proxy.port"
 python3 "$root/scripts/alpine-proxy.py" 0 "$cache/alpine-repo" >"$proxy_port_file" 2>"$build/proxy.log" &
 proxy_pid=$!
@@ -51,7 +52,7 @@ title = "Alpine Linux"
 kind = "linux"
 linux = "/boot/vmlinuz"
 initrd = "/boot/initramfs"
-options = "console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+options = "console=ttyS0 modules=loop,squashfs alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
 
 [[entries]]
 id = "alpine-debug"
@@ -59,7 +60,7 @@ title = "Alpine Linux (debug)"
 kind = "linux"
 linux = "/boot/vmlinuz"
 initrd = "/boot/initramfs"
-options = "console=ttyS0 loglevel=7 modules=loop,squashfs ip=dhcp alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+options = "console=ttyS0 loglevel=7 modules=loop,squashfs alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
 EOF
 
 truncate -s 64M "$build/esp.img"
@@ -82,8 +83,13 @@ else
   accel_args=(-cpu qemu64)
 fi
 
+# -nodefaults + explicit -netdev/-device/-vga: the q35 machine type auto-attaches
+# an empty CD-ROM drive unless told otherwise, which is pointless here.
 qemu-system-x86_64 \
   -machine q35 -m 512M "${accel_args[@]}" \
+  -nodefaults \
+  -vga std \
+  -netdev user,id=net0 -device e1000e,netdev=net0 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive format=raw,file="$build/esp.img" \
   -object rng-random,filename=/dev/urandom,id=rng0 \
