@@ -185,13 +185,13 @@ fn read_with_spinner(
 fn boot_limine(bytes: &[u8], modules: &[limine::Module]) -> Result<Infallible, &'static str> {
     let image = elf::Image::parse(&bytes)?;
     let loaded = load_segments(&bytes, &image)?;
-    limine::Limine::prepare(&bytes, &image, &loaded, modules, HHDM_OFFSET)?;
+    let mut limine = limine::Limine::prepare(&bytes, &image, &loaded, modules, HHDM_OFFSET)?;
 
     // This initial map keeps the firmware's low address space available while
     // mapping the kernel at its requested Limine virtual addresses.
     let mut tables = paging::PageTables::new()?;
     tables.map_identity_first_4g()?;
-    tables.map_hhdm_first_4g(HHDM_OFFSET)?;
+    tables.map_hhdm_through(HHDM_OFFSET, limine.hhdm_physical_end())?;
     for segment in &loaded {
         tables.map_range(
             segment.virtual_address,
@@ -205,7 +205,8 @@ fn boot_limine(bytes: &[u8], modules: &[limine::Module]) -> Result<Infallible, &
 
     // No Rust allocation or UEFI service may happen after this point.
     unsafe {
-        let _memory_map = boot::exit_boot_services(None);
+        let memory_map = boot::exit_boot_services(None);
+        limine.populate_memory_map(&memory_map);
         tables.activate();
         let kernel: extern "sysv64" fn() -> ! = core::mem::transmute(entry as usize);
         kernel()
@@ -220,7 +221,11 @@ fn load_segments(
 
     for segment in image.load_segments()? {
         let pages = elf::pages_for(segment.memory_size)?;
-        let memory = boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, pages)
+        let memory = boot::allocate_pages(
+            AllocateType::MaxAddress(0xffff_f000),
+            MemoryType::LOADER_DATA,
+            pages,
+        )
             .map_err(|_| "cannot allocate kernel segment")?;
         unsafe {
             core::ptr::write_bytes(memory.as_ptr(), 0, pages * elf::PAGE_SIZE);

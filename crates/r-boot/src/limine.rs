@@ -74,6 +74,7 @@ struct MemoryMapResponse {
     entries: u64,
 }
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct MemoryMapEntry {
     base: u64,
     length: u64,
@@ -119,6 +120,20 @@ pub struct LoadedModule {
     pub name: u64,
 }
 
+pub struct Prepared {
+    memory_map: MemoryMapStorage,
+}
+
+impl Prepared {
+    pub fn populate_memory_map(&mut self, memory_map: &impl MemoryMap) {
+        self.memory_map.populate(memory_map);
+    }
+
+    pub fn hhdm_physical_end(&self) -> u64 {
+        self.memory_map.physical_end
+    }
+}
+
 impl Limine {
     pub fn prepare(
         bytes: &[u8],
@@ -126,10 +141,39 @@ impl Limine {
         segments: &[LoadedSegment],
         modules: &[Module],
         hhdm_offset: u64,
-    ) -> Result<Vec<LoadedModule>, &'static str> {
+    ) -> Result<Prepared, &'static str> {
         let modules = load_modules(modules, hhdm_offset)?;
-        write_responses(bytes, image, segments, &modules, hhdm_offset)?;
-        Ok(modules)
+        let module_response = module_response(&modules, hhdm_offset)?;
+        let (framebuffer_response, framebuffer_range) = framebuffer_response(hhdm_offset);
+        let mut ranges = Vec::new();
+        for segment in segments {
+            ranges.push(MemoryRange {
+                base: segment.physical_address,
+                length: segment.length as u64,
+                kind: 6,
+            });
+        }
+        for module in &modules {
+            ranges.push(MemoryRange {
+                base: module.physical_address,
+                length: module.length as u64,
+                kind: 6,
+            });
+        }
+        if let Some(range) = framebuffer_range {
+            ranges.push(range);
+        }
+        let memory_map = MemoryMapStorage::new(hhdm_offset, ranges)?;
+        write_responses(
+            bytes,
+            image,
+            segments,
+            module_response,
+            memory_map.response_address(hhdm_offset),
+            framebuffer_response,
+            hhdm_offset,
+        )?;
+        Ok(Prepared { memory_map })
     }
 }
 
@@ -137,7 +181,9 @@ fn write_responses(
     bytes: &[u8],
     _image: &Image<'_>,
     segments: &[LoadedSegment],
-    modules: &[LoadedModule],
+    module_response: u64,
+    memory_map_response: u64,
+    framebuffer_response: u64,
     hhdm_offset: u64,
 ) -> Result<(), &'static str> {
     if !segments
@@ -158,9 +204,6 @@ fn write_responses(
         .min()
         .unwrap();
 
-    let module_response = module_response(modules, hhdm_offset)?;
-    let memory_map_response = memory_map_response(hhdm_offset)?;
-    let framebuffer_response = framebuffer_response(hhdm_offset);
     for offset in (0..bytes.len().saturating_sub(24)).step_by(8) {
         let first = u64_at(bytes, offset)?;
         let second = u64_at(bytes, offset + 8)?;
@@ -223,8 +266,12 @@ fn load_modules(modules: &[Module], hhdm_offset: u64) -> Result<Vec<LoadedModule
     let mut loaded = Vec::new();
     for module in modules {
         let pages = module.bytes.len().div_ceil(4096);
-        let memory = boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, pages)
-            .map_err(|_| "cannot allocate Limine module")?;
+        let memory = boot::allocate_pages(
+            AllocateType::MaxAddress(0xffff_f000),
+            MemoryType::LOADER_DATA,
+            pages,
+        )
+        .map_err(|_| "cannot allocate Limine module below 4 GiB")?;
         unsafe {
             core::ptr::copy_nonoverlapping(module.bytes.as_ptr(), memory.as_ptr(), module.bytes.len());
         }
@@ -272,51 +319,119 @@ fn module_response(modules: &[LoadedModule], hhdm_offset: u64) -> Result<u64, &'
     Ok(hhdm_of_box(Box::new(response), hhdm_offset))
 }
 
-fn memory_map_response(hhdm_offset: u64) -> Result<u64, &'static str> {
-    let memory_map = boot::memory_map(MemoryType::LOADER_DATA).map_err(|_| "cannot get UEFI memory map")?;
-    let mut entries = Vec::new();
-    for entry in memory_map.entries() {
-        let kind = match entry.ty {
-            MemoryType::CONVENTIONAL => 0,
-            MemoryType::ACPI_RECLAIM => 2,
-            MemoryType::ACPI_NON_VOLATILE => 3,
-            MemoryType::UNUSABLE => 4,
-            MemoryType::BOOT_SERVICES_CODE | MemoryType::BOOT_SERVICES_DATA => 5,
-            _ => 1,
-        };
-        entries.push(hhdm_of_box(
-            Box::new(MemoryMapEntry {
-                base: entry.phys_start,
-                length: entry.page_count * 4096,
-                kind,
-            }),
-            hhdm_offset,
-        ));
-    }
-    let entries = Box::leak(entries.into_boxed_slice());
-    Ok(hhdm_of_box(
-        Box::new(MemoryMapResponse {
-            revision: 0,
-            entry_count: entries.len() as u64,
-            entries: hhdm_offset + entries.as_ptr() as u64,
-        }),
-        hhdm_offset,
-    ))
+struct MemoryRange {
+    base: u64,
+    length: u64,
+    kind: u64,
 }
 
-fn framebuffer_response(hhdm_offset: u64) -> u64 {
+struct MemoryMapStorage {
+    entries: Box<[MemoryMapEntry]>,
+    pointers: Box<[u64]>,
+    response: Box<MemoryMapResponse>,
+    ranges: Vec<MemoryRange>,
+    physical_end: u64,
+}
+
+impl MemoryMapStorage {
+    fn new(hhdm_offset: u64, ranges: Vec<MemoryRange>) -> Result<Self, &'static str> {
+        let memory_map =
+            boot::memory_map(MemoryType::LOADER_DATA).map_err(|_| "cannot reserve Limine memory map")?;
+        let count = memory_map.entries().count();
+        let physical_end = memory_map
+            .entries()
+            .map(|entry| entry.phys_start.saturating_add(entry.page_count.saturating_mul(4096)))
+            .max()
+            .unwrap_or(0);
+        // Every special range can split one UEFI descriptor into three pieces.
+        let capacity = count + ranges.len() * 2 + 32;
+        let entries = alloc::vec![
+            MemoryMapEntry {
+                base: 0,
+                length: 0,
+                kind: 1,
+            };
+            capacity
+        ]
+        .into_boxed_slice();
+        let pointers = entries
+            .iter()
+            .map(|entry| hhdm_offset + (entry as *const MemoryMapEntry as u64))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let response = Box::new(MemoryMapResponse {
+            revision: 0,
+            entry_count: 0,
+            entries: hhdm_offset + pointers.as_ptr() as u64,
+        });
+        Ok(Self {
+            entries,
+            pointers,
+            response,
+            ranges,
+            physical_end,
+        })
+    }
+
+    fn response_address(&self, hhdm_offset: u64) -> u64 {
+        hhdm_offset + (&*self.response as *const MemoryMapResponse as u64)
+    }
+
+    fn populate(&mut self, memory_map: &impl MemoryMap) {
+        let mut count = 0;
+        for descriptor in memory_map.entries() {
+            let mut cursor = descriptor.phys_start;
+            let end = cursor.saturating_add(descriptor.page_count.saturating_mul(4096));
+            while cursor < end && count < self.entries.len() {
+                let mut next = end;
+                let mut kind = uefi_memory_kind(descriptor.ty);
+                for range in &self.ranges {
+                    let range_end = range.base.saturating_add(range.length);
+                    if cursor >= range.base && cursor < range_end {
+                        kind = range.kind;
+                        next = next.min(range_end);
+                    } else if range.base > cursor {
+                        next = next.min(range.base);
+                    }
+                }
+                self.entries[count] = MemoryMapEntry {
+                    base: cursor,
+                    length: next.saturating_sub(cursor),
+                    kind,
+                };
+                count += 1;
+                cursor = next;
+            }
+        }
+        self.response.entry_count = count as u64;
+        let _ = &self.pointers;
+    }
+}
+
+fn uefi_memory_kind(ty: MemoryType) -> u64 {
+    match ty {
+        MemoryType::CONVENTIONAL => 0,
+        MemoryType::ACPI_RECLAIM => 2,
+        MemoryType::ACPI_NON_VOLATILE => 3,
+        MemoryType::UNUSABLE => 4,
+        MemoryType::BOOT_SERVICES_CODE | MemoryType::BOOT_SERVICES_DATA => 5,
+        _ => 1,
+    }
+}
+
+fn framebuffer_response(hhdm_offset: u64) -> (u64, Option<MemoryRange>) {
     let Ok(handle) = boot::get_handle_for_protocol::<GraphicsOutput>() else {
-        return 0;
+        return (0, None);
     };
     let Ok(mut gop) = boot::open_protocol_exclusive::<GraphicsOutput>(handle) else {
-        return 0;
+        return (0, None);
     };
     let info = gop.current_mode_info();
     let (width, height) = info.resolution();
     let (red_shift, green_shift, blue_shift) = match info.pixel_format() {
         PixelFormat::Rgb => (0, 8, 16),
         PixelFormat::Bgr => (16, 8, 0),
-        _ => return 0,
+        _ => return (0, None),
     };
     let framebuffer = hhdm_of_box(
         Box::new(RawFramebuffer {
@@ -339,13 +454,21 @@ fn framebuffer_response(hhdm_offset: u64) -> u64 {
         hhdm_offset,
     );
     let framebuffers = Box::leak(alloc::vec![framebuffer].into_boxed_slice());
-    hhdm_of_box(
+    let response = hhdm_of_box(
         Box::new(FramebufferResponse {
             revision: 0,
             framebuffer_count: 1,
             framebuffers: hhdm_offset + framebuffers.as_ptr() as u64,
         }),
         hhdm_offset,
+    );
+    (
+        response,
+        Some(MemoryRange {
+            base: gop.frame_buffer().as_mut_ptr() as u64,
+            length: (info.stride() * height * 4) as u64,
+            kind: 7,
+        }),
     )
 }
 

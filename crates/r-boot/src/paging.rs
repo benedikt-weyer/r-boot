@@ -25,15 +25,19 @@ impl PageTables {
     }
 
     pub fn map_identity_first_4g(&mut self) -> Result<(), &'static str> {
-        self.map_2m_window(0)
+        self.map_2m_window(0, 4)
     }
 
-    pub fn map_hhdm_first_4g(&mut self, offset: u64) -> Result<(), &'static str> {
-        self.map_2m_window(offset)
+    pub fn map_hhdm_through(&mut self, offset: u64, physical_end: u64) -> Result<(), &'static str> {
+        let gigabytes = physical_end
+            .checked_add((1 << 30) - 1)
+            .ok_or("HHDM range overflow")?
+            >> 30;
+        self.map_2m_window(offset, gigabytes.max(4))
     }
 
-    fn map_2m_window(&mut self, virtual_base: u64) -> Result<(), &'static str> {
-        for gigabyte in 0..4u64 {
+    fn map_2m_window(&mut self, virtual_base: u64, gigabytes: u64) -> Result<(), &'static str> {
+        for gigabyte in 0..gigabytes {
             let pdpt =
                 self.child_table(self.root, index_pml4(virtual_base + gigabyte * (1 << 30)))?;
             let pd = allocate_table()?;
