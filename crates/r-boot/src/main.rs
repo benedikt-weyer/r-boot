@@ -28,6 +28,7 @@ const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().expect("UEFI helpers must initialize");
+    log::set_max_level(log::LevelFilter::Info);
     uefi::system::with_stdout(|output| {
         let _ = output.clear();
     });
