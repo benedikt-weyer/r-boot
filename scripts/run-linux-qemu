@@ -7,16 +7,41 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-linux-qemu"
 mirror="${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot}"
+cache="$root/.cache"
 
 "$root/scripts/build-efi"
 rm -rf "$build"
-mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
-curl --fail --location --output "$build/vmlinuz" "$mirror/vmlinuz-virt"
-curl --fail --location --output "$build/initramfs" "$mirror/initramfs-virt"
+mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot" "$cache/alpine-netboot" "$cache/alpine-repo"
+
+# Cache the host-side kernel/initramfs fetch across runs; only re-download
+# if not already present (rm -rf .cache to force a refresh).
+[[ -f "$cache/alpine-netboot/vmlinuz-virt" ]] || curl --fail --location --output "$cache/alpine-netboot/vmlinuz-virt" "$mirror/vmlinuz-virt"
+[[ -f "$cache/alpine-netboot/initramfs-virt" ]] || curl --fail --location --output "$cache/alpine-netboot/initramfs-virt" "$mirror/initramfs-virt"
+cp "$cache/alpine-netboot/vmlinuz-virt" "$build/vmlinuz"
+cp "$cache/alpine-netboot/initramfs-virt" "$build/initramfs"
+
+# The guest itself fetches the modloop image and ~28 apk packages over the
+# network at boot (ip=dhcp + alpine_repo/modloop). Proxy those through a
+# local caching server so repeat runs don't re-download from the real
+# Alpine CDN. QEMU usermode networking maps 10.0.2.2 to the host.
+proxy_port_file="$build/proxy.port"
+python3 "$root/scripts/alpine-proxy.py" 0 "$cache/alpine-repo" >"$proxy_port_file" 2>"$build/proxy.log" &
+proxy_pid=$!
+trap 'kill "$proxy_pid" 2>/dev/null || true' EXIT
+for _ in $(seq 1 50); do
+  [[ -s "$proxy_port_file" ]] && break
+  sleep 0.1
+done
+proxy_port="$(cat "$proxy_port_file")"
+if [[ -z "$proxy_port" ]]; then
+  printf 'alpine-proxy failed to start; see %s\n' "$build/proxy.log" >&2
+  exit 1
+fi
+
 cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$build/vmlinuz" "$build/esp/boot/vmlinuz"
 cp "$build/initramfs" "$build/esp/boot/initramfs"
-cat >"$build/r-boot.toml" <<'EOF'
+cat >"$build/r-boot.toml" <<EOF
 default = "alpine"
 timeout = 5
 
@@ -26,7 +51,7 @@ title = "Alpine Linux"
 kind = "linux"
 linux = "/boot/vmlinuz"
 initrd = "/boot/initramfs"
-options = "console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+options = "console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
 
 [[entries]]
 id = "alpine-debug"
@@ -34,7 +59,7 @@ title = "Alpine Linux (debug)"
 kind = "linux"
 linux = "/boot/vmlinuz"
 initrd = "/boot/initramfs"
-options = "console=ttyS0 loglevel=7 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+options = "console=ttyS0 loglevel=7 modules=loop,squashfs ip=dhcp alpine_repo=http://10.0.2.2:$proxy_port/alpine/latest-stable/main modloop=http://10.0.2.2:$proxy_port/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
 EOF
 
 truncate -s 64M "$build/esp.img"
@@ -50,9 +75,18 @@ if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
   exit 2
 fi
 
+accel_args=()
+if [[ -w /dev/kvm ]]; then
+  accel_args=(-enable-kvm -cpu host)
+else
+  accel_args=(-cpu qemu64)
+fi
+
 qemu-system-x86_64 \
-  -machine q35 -m 512M -cpu qemu64 \
+  -machine q35 -m 512M "${accel_args[@]}" \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive format=raw,file="$build/esp.img" \
+  -object rng-random,filename=/dev/urandom,id=rng0 \
+  -device virtio-rng-pci,rng=rng0 \
   -serial stdio \
   -no-reboot
