@@ -8,8 +8,8 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-qemu"
 kernel="${RBOOT_KERNEL:-}"
-kernel_url="${RBOOT_KERNEL_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.15/open-kernel-limine.elf}"
-modules_iso_url="${RBOOT_MODULES_ISO_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.15/open-kernel-limine.iso}"
+kernel_url="${RBOOT_KERNEL_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.16/open-kernel-limine.elf}"
+modules_iso_url="${RBOOT_MODULES_ISO_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.16/open-kernel-limine.iso}"
 
 if [[ -n "$kernel" && ! -f "$kernel" ]]; then
   printf 'Set RBOOT_KERNEL to a Limine-compatible x86_64 ELF, or RBOOT_KERNEL_URL to its direct download URL.\n' >&2
