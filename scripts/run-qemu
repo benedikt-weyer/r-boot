@@ -50,5 +50,6 @@ qemu-system-x86_64 \
   -machine q35 -m 256M -cpu qemu64 \
   -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
   -drive format=raw,file="$build/esp.img" \
+  -device virtio-rng-pci,disable-modern=on \
   -serial stdio -debugcon "file:$build/debugcon.log" -global isa-debugcon.iobase=0x402 \
   -no-reboot
