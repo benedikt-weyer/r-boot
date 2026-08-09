@@ -70,26 +70,40 @@ impl Menu {
         boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
             .map_err(|_| "cannot set boot-menu timeout")?;
 
-        let mut remaining = timeout;
+        let mut remaining = Some(timeout);
         loop {
             self.draw(selected, remaining);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
-            // `wait_for_event` takes owned handles although it does not close
-            // them. The aliases remain valid until `timer` is closed below.
-            let mut events = unsafe { [key_event.unsafe_clone(), timer.unsafe_clone()] };
-            let index =
-                boot::wait_for_event(&mut events).map_err(|_| "cannot wait for keyboard input")?;
-            if index == 1 {
-                remaining -= 1;
-                if remaining == 0 {
-                    let _ = boot::close_event(timer);
-                    return Ok(selected);
+            match remaining {
+                Some(left) => {
+                    // `wait_for_event` takes owned handles although it does not
+                    // close them. The aliases remain valid until `timer` is
+                    // closed below.
+                    let mut events = unsafe { [key_event.unsafe_clone(), timer.unsafe_clone()] };
+                    let index = boot::wait_for_event(&mut events)
+                        .map_err(|_| "cannot wait for keyboard input")?;
+                    if index == 1 {
+                        if left == 1 {
+                            let _ = boot::close_event(timer);
+                            return Ok(selected);
+                        }
+                        remaining = Some(left - 1);
+                        continue;
+                    }
                 }
-                continue;
+                None => {
+                    let mut events = unsafe { [key_event.unsafe_clone()] };
+                    boot::wait_for_event(&mut events)
+                        .map_err(|_| "cannot wait for keyboard input")?;
+                }
             }
             let key = system::with_stdin(|input| input.read_key())
                 .map_err(|_| "cannot read keyboard input")?;
+            if remaining.is_some() {
+                let _ = boot::set_timer(&timer, TimerTrigger::Cancel);
+                remaining = None;
+            }
             match key {
                 Some(Key::Special(ScanCode::UP)) => {
                     selected = selected.checked_sub(1).unwrap_or(self.entries.len() - 1)
@@ -103,7 +117,6 @@ impl Menu {
                 }
                 _ => continue,
             }
-            remaining = timeout;
         }
     }
 
@@ -121,12 +134,15 @@ impl Menu {
             .unwrap_or(0)
     }
 
-    fn draw(&self, selected: usize, timeout: u64) {
+    fn draw(&self, selected: usize, remaining: Option<u64>) {
         system::with_stdout(|output| {
             let _ = output.clear();
         });
         uefi::println!("r-boot");
-        uefi::println!("Select an entry (boots in {timeout}s):");
+        match remaining {
+            Some(seconds) => uefi::println!("Select an entry (boots in {seconds}s):"),
+            None => uefi::println!("Select an entry:"),
+        }
         uefi::println!();
         for (index, entry) in self.entries.iter().enumerate() {
             let marker = if index == selected { '>' } else { ' ' };
