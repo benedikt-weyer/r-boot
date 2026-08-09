@@ -173,7 +173,7 @@ Run it in QEMU with a Limine-compatible kernel:
 
 ```sh
 RBOOT_KERNEL=/path/to/kernel.elf ./run-qemu.sh
-# or a direct artifact URL:
+# Defaults to OpenKernel's Limine artifact; override it with a direct URL:
 RBOOT_KERNEL_URL=https://example.invalid/kernel.elf ./run-qemu.sh
 ```
 

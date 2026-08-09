@@ -16,7 +16,7 @@ r-boot developer commands
   RBOOT_KERNEL=/path/kernel.elf ./run-qemu
                               build an ESP and boot a Limine-compatible ELF
   RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu
-                              download a compatible ELF then boot it
+                              override the default OpenKernel Limine ELF
   ./run-linux-qemu             download Alpine netboot and test Linux handover
   ./run-nixos-qemu              download nixos-images minimal netboot and test Linux handover
 

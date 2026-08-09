@@ -8,13 +8,9 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-qemu"
 kernel="${RBOOT_KERNEL:-}"
+kernel_url="${RBOOT_KERNEL_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.9/open-kernel-limine.elf}"
 
-if [[ -z "$kernel" && -n "${RBOOT_KERNEL_URL:-}" ]]; then
-  mkdir -p "$build"
-  kernel="$build/kernel.elf"
-  curl --fail --location --output "$kernel" "$RBOOT_KERNEL_URL"
-fi
-if [[ -z "$kernel" || ! -f "$kernel" ]]; then
+if [[ -n "$kernel" && ! -f "$kernel" ]]; then
   printf 'Set RBOOT_KERNEL to a Limine-compatible x86_64 ELF, or RBOOT_KERNEL_URL to its direct download URL.\n' >&2
   exit 2
 fi
@@ -22,6 +18,10 @@ fi
 cargo build --release --target x86_64-unknown-uefi -p r-boot
 rm -rf "$build"
 mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
+if [[ -z "$kernel" ]]; then
+  kernel="$build/kernel.elf"
+  curl --fail --location --output "$kernel" "$kernel_url"
+fi
 cp "$root/target/x86_64-unknown-uefi/release/r-boot.efi" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$kernel" "$build/esp/boot/kernel.elf"
 truncate -s 64M "$build/esp.img"
