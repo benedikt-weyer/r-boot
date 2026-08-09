@@ -9,6 +9,7 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-qemu"
 kernel="${RBOOT_KERNEL:-}"
 kernel_url="${RBOOT_KERNEL_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.9/open-kernel-limine.elf}"
+modules_iso_url="${RBOOT_MODULES_ISO_URL:-https://github.com/benedikt-weyer/open-kernel/releases/download/v0.47.9/open-kernel-limine.iso}"
 
 if [[ -n "$kernel" && ! -f "$kernel" ]]; then
   printf 'Set RBOOT_KERNEL to a Limine-compatible x86_64 ELF, or RBOOT_KERNEL_URL to its direct download URL.\n' >&2
@@ -22,6 +23,12 @@ if [[ -z "$kernel" ]]; then
   kernel="$build/kernel.elf"
   curl --fail --location --output "$kernel" "$kernel_url"
 fi
+modules_iso="$build/open-kernel-limine.iso"
+curl --fail --location --output "$modules_iso" "$modules_iso_url"
+for module in init console std-smoke; do
+  xorriso -osirrox on -indev "$modules_iso" \
+    -extract "/boot/$module.elf" "$build/esp/boot/$module.elf" >/dev/null
+done
 cp "$root/target/x86_64-unknown-uefi/release/r-boot.efi" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$kernel" "$build/esp/boot/kernel.elf"
 truncate -s 64M "$build/esp.img"
@@ -40,5 +47,5 @@ qemu-system-x86_64 \
   -machine q35 -m 256M -cpu qemu64 \
   -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
   -drive format=raw,file="$build/esp.img" \
-  -debugcon stdio -global isa-debugcon.iobase=0x402 \
+  -serial stdio -debugcon "file=$build/debugcon.log" -global isa-debugcon.iobase=0x402 \
   -no-reboot

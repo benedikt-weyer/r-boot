@@ -4,10 +4,11 @@
 //! bootloader-info, firmware-type, HHDM, and executable-address.  Unknown
 //! requests are left unanswered, as required by the protocol.
 
-use alloc::boxed::Box;
-
+use alloc::{boxed::Box, vec::Vec};
 use crate::elf::{Image, LoadedSegment};
-use crate::protocol::BootProtocol;
+use uefi::boot::{self, AllocateType, MemoryType};
+use uefi::mem::memory_map::MemoryMap;
+use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 
 const COMMON_MAGIC: [u64; 2] = [0xc7b1_dd30_df4c_8b88, 0x0a82_e883_a194_f07b];
 const BASE_MAGIC: [u64; 2] = [0xf956_2b2d_5c95_a6c8, 0x6a7b_3849_4453_6bdc];
@@ -15,6 +16,9 @@ const BOOTLOADER_INFO: [u64; 2] = [0xf550_38d8_e2a1_202f, 0x2794_26fc_f5f5_9740]
 const FIRMWARE_TYPE: [u64; 2] = [0x8c2f_75d9_0bef_28a8, 0x7045_a468_8eac_00c3];
 const HHDM: [u64; 2] = [0x48dc_f1cb_8ad2_b852, 0x6398_4e95_9a98_244b];
 const EXECUTABLE_ADDRESS: [u64; 2] = [0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487];
+const FRAMEBUFFER: [u64; 2] = [0x9d58_27dc_d881_dd75, 0xa314_8604_f6fa_b11b];
+const MEMORY_MAP: [u64; 2] = [0x67cf_3d9d_378a_806f, 0xe304_acdf_c50c_3c62];
+const MODULES: [u64; 2] = [0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee];
 const REQUEST_SIZE: usize = 48;
 
 #[repr(C)]
@@ -39,21 +43,93 @@ struct ExecutableAddressResponse {
     physical_base: u64,
     virtual_base: u64,
 }
+#[repr(C)]
+struct FramebufferResponse {
+    revision: u64,
+    framebuffer_count: u64,
+    framebuffers: u64,
+}
+#[repr(C)]
+struct RawFramebuffer {
+    address: u64,
+    width: u64,
+    height: u64,
+    pitch: u64,
+    bpp: u16,
+    memory_model: u8,
+    red_mask_size: u8,
+    red_mask_shift: u8,
+    green_mask_size: u8,
+    green_mask_shift: u8,
+    blue_mask_size: u8,
+    blue_mask_shift: u8,
+    unused: [u8; 7],
+    edid_size: u64,
+    edid: u64,
+}
+#[repr(C)]
+struct MemoryMapResponse {
+    revision: u64,
+    entry_count: u64,
+    entries: u64,
+}
+#[repr(C)]
+struct MemoryMapEntry {
+    base: u64,
+    length: u64,
+    kind: u64,
+}
+#[repr(C)]
+struct ModuleResponse {
+    revision: u64,
+    module_count: u64,
+    modules: u64,
+}
+#[repr(C)]
+struct File {
+    revision: u64,
+    address: u64,
+    size: u64,
+    path: u64,
+    string: u64,
+    media_type: u32,
+    unused: u32,
+    tftp_ip: u32,
+    tftp_port: u32,
+    partition_index: u32,
+    mbr_disk_id: u32,
+    gpt_disk_id: [u8; 16],
+    gpt_partition_id: [u8; 16],
+    partition_uuid: [u8; 16],
+}
 
 static NAME: &[u8] = b"r-boot\0";
 static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
 
 pub struct Limine;
 
-impl BootProtocol for Limine {
-    fn prepare(
-        &self,
+pub struct Module {
+    pub name: &'static str,
+    pub bytes: Vec<u8>,
+}
+
+pub struct LoadedModule {
+    pub physical_address: u64,
+    pub length: usize,
+    pub name: u64,
+}
+
+impl Limine {
+    pub fn prepare(
         bytes: &[u8],
         image: &Image<'_>,
         segments: &[LoadedSegment],
+        modules: &[Module],
         hhdm_offset: u64,
-    ) -> Result<(), &'static str> {
-        write_responses(bytes, image, segments, hhdm_offset)
+    ) -> Result<Vec<LoadedModule>, &'static str> {
+        let modules = load_modules(modules, hhdm_offset)?;
+        write_responses(bytes, image, segments, &modules, hhdm_offset)?;
+        Ok(modules)
     }
 }
 
@@ -61,6 +137,7 @@ fn write_responses(
     bytes: &[u8],
     _image: &Image<'_>,
     segments: &[LoadedSegment],
+    modules: &[LoadedModule],
     hhdm_offset: u64,
 ) -> Result<(), &'static str> {
     if !segments
@@ -81,6 +158,9 @@ fn write_responses(
         .min()
         .unwrap();
 
+    let module_response = module_response(modules, hhdm_offset)?;
+    let memory_map_response = memory_map_response(hhdm_offset)?;
+    let framebuffer_response = framebuffer_response(hhdm_offset);
     for offset in (0..bytes.len().saturating_sub(24)).step_by(8) {
         let first = u64_at(bytes, offset)?;
         let second = u64_at(bytes, offset + 8)?;
@@ -125,12 +205,148 @@ fn write_responses(
                 }),
                 hhdm_offset,
             )
+        } else if id == FRAMEBUFFER {
+            framebuffer_response
+        } else if id == MEMORY_MAP {
+            memory_map_response
+        } else if id == MODULES {
+            module_response
         } else {
             continue;
         };
         write_at_offset(segments, offset + 40, response)?;
     }
     Ok(())
+}
+
+fn load_modules(modules: &[Module], hhdm_offset: u64) -> Result<Vec<LoadedModule>, &'static str> {
+    let mut loaded = Vec::new();
+    for module in modules {
+        let pages = module.bytes.len().div_ceil(4096);
+        let memory = boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, pages)
+            .map_err(|_| "cannot allocate Limine module")?;
+        unsafe {
+            core::ptr::copy_nonoverlapping(module.bytes.as_ptr(), memory.as_ptr(), module.bytes.len());
+        }
+        let mut name = module.name.as_bytes().to_vec();
+        name.push(0);
+        let name = Box::leak(name.into_boxed_slice());
+        loaded.push(LoadedModule {
+            physical_address: memory.as_ptr() as u64,
+            length: module.bytes.len(),
+            name: hhdm_offset + name.as_ptr() as u64,
+        });
+    }
+    Ok(loaded)
+}
+
+fn module_response(modules: &[LoadedModule], hhdm_offset: u64) -> Result<u64, &'static str> {
+    let mut files = Vec::new();
+    for module in modules {
+        files.push(hhdm_of_box(
+            Box::new(File {
+                revision: 0,
+                address: hhdm_offset + module.physical_address,
+                size: module.length as u64,
+                path: module.name,
+                string: module.name,
+                media_type: 0,
+                unused: 0,
+                tftp_ip: 0,
+                tftp_port: 0,
+                partition_index: 0,
+                mbr_disk_id: 0,
+                gpt_disk_id: [0; 16],
+                gpt_partition_id: [0; 16],
+                partition_uuid: [0; 16],
+            }),
+            hhdm_offset,
+        ));
+    }
+    let files = Box::leak(files.into_boxed_slice());
+    let response = ModuleResponse {
+        revision: 0,
+        module_count: files.len() as u64,
+        modules: hhdm_offset + files.as_ptr() as u64,
+    };
+    Ok(hhdm_of_box(Box::new(response), hhdm_offset))
+}
+
+fn memory_map_response(hhdm_offset: u64) -> Result<u64, &'static str> {
+    let memory_map = boot::memory_map(MemoryType::LOADER_DATA).map_err(|_| "cannot get UEFI memory map")?;
+    let mut entries = Vec::new();
+    for entry in memory_map.entries() {
+        let kind = match entry.ty {
+            MemoryType::CONVENTIONAL => 0,
+            MemoryType::ACPI_RECLAIM => 2,
+            MemoryType::ACPI_NON_VOLATILE => 3,
+            MemoryType::UNUSABLE => 4,
+            MemoryType::BOOT_SERVICES_CODE | MemoryType::BOOT_SERVICES_DATA => 5,
+            _ => 1,
+        };
+        entries.push(hhdm_of_box(
+            Box::new(MemoryMapEntry {
+                base: entry.phys_start,
+                length: entry.page_count * 4096,
+                kind,
+            }),
+            hhdm_offset,
+        ));
+    }
+    let entries = Box::leak(entries.into_boxed_slice());
+    Ok(hhdm_of_box(
+        Box::new(MemoryMapResponse {
+            revision: 0,
+            entry_count: entries.len() as u64,
+            entries: hhdm_offset + entries.as_ptr() as u64,
+        }),
+        hhdm_offset,
+    ))
+}
+
+fn framebuffer_response(hhdm_offset: u64) -> u64 {
+    let Ok(handle) = boot::get_handle_for_protocol::<GraphicsOutput>() else {
+        return 0;
+    };
+    let Ok(mut gop) = boot::open_protocol_exclusive::<GraphicsOutput>(handle) else {
+        return 0;
+    };
+    let info = gop.current_mode_info();
+    let (width, height) = info.resolution();
+    let (red_shift, green_shift, blue_shift) = match info.pixel_format() {
+        PixelFormat::Rgb => (0, 8, 16),
+        PixelFormat::Bgr => (16, 8, 0),
+        _ => return 0,
+    };
+    let framebuffer = hhdm_of_box(
+        Box::new(RawFramebuffer {
+            address: hhdm_offset + gop.frame_buffer().as_mut_ptr() as u64,
+            width: width as u64,
+            height: height as u64,
+            pitch: (info.stride() * 4) as u64,
+            bpp: 32,
+            memory_model: 1,
+            red_mask_size: 8,
+            red_mask_shift: red_shift,
+            green_mask_size: 8,
+            green_mask_shift: green_shift,
+            blue_mask_size: 8,
+            blue_mask_shift: blue_shift,
+            unused: [0; 7],
+            edid_size: 0,
+            edid: 0,
+        }),
+        hhdm_offset,
+    );
+    let framebuffers = Box::leak(alloc::vec![framebuffer].into_boxed_slice());
+    hhdm_of_box(
+        Box::new(FramebufferResponse {
+            revision: 0,
+            framebuffer_count: 1,
+            framebuffers: hhdm_offset + framebuffers.as_ptr() as u64,
+        }),
+        hhdm_offset,
+    )
 }
 
 #[allow(non_snake_case)]

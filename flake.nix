@@ -92,7 +92,7 @@
       nixosModules.default = import ./nix/module.nix { rBootPackage = r-boot; };
 
       devShells.${system}.default = pkgs.mkShell {
-        packages = [ rust pkgs.qemu pkgs.OVMF pkgs.mtools pkgs.dosfstools pkgs.curl pkgs.gnumake ];
+        packages = [ rust pkgs.qemu pkgs.OVMF pkgs.mtools pkgs.dosfstools pkgs.curl pkgs.gnumake pkgs.xorriso ];
         OVMF_CODE = "${pkgs.OVMF.fd}/FV/OVMF_CODE.fd";
       };
     };

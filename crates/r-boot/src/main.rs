@@ -9,14 +9,12 @@ mod limine;
 mod linux;
 mod menu;
 mod paging;
-mod protocol;
 mod spinner;
 mod splash;
 
 use alloc::vec::Vec;
 use core::convert::Infallible;
 
-use protocol::BootProtocol;
 use spinner::Spinner;
 use uefi::boot::{self, AllocateType, LoadImageSource, MemoryType};
 use uefi::cstr16;
@@ -97,7 +95,7 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
                     "cannot read selected Limine kernel",
                 )?;
                 drop(fs);
-                boot_limine(&bytes)
+                boot_limine(&bytes, &[])
             }
             menu::Kind::Efi => {
                 let image_path = menu::path(&entry.kernel)?;
@@ -145,8 +143,24 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
         &mut spinner,
         "cannot read \\boot\\kernel.elf",
     )?;
+    let modules = load_limine_modules(&mut fs, &mut spinner);
     drop(fs);
-    boot_limine(&bytes)
+    boot_limine(&bytes, &modules)
+}
+
+fn load_limine_modules(fs: &mut FileSystem, spinner: &mut Spinner) -> Vec<limine::Module> {
+    let mut modules = Vec::new();
+    for (name, path) in [
+        ("init", Path::new(cstr16!("\\boot\\init.elf"))),
+        ("console", Path::new(cstr16!("\\boot\\console.elf"))),
+        ("std-smoke", Path::new(cstr16!("\\boot\\std-smoke.elf"))),
+    ] {
+        if let Ok(bytes) = fs.read(path) {
+            spinner.tick("Loading Limine modules...");
+            modules.push(limine::Module { name, bytes });
+        }
+    }
+    modules
 }
 
 /// Reads one boot payload while keeping the user informed of disk activity.
@@ -168,10 +182,10 @@ fn read_with_spinner(
     bytes
 }
 
-fn boot_limine(bytes: &[u8]) -> Result<Infallible, &'static str> {
+fn boot_limine(bytes: &[u8], modules: &[limine::Module]) -> Result<Infallible, &'static str> {
     let image = elf::Image::parse(&bytes)?;
     let loaded = load_segments(&bytes, &image)?;
-    limine::Limine.prepare(&bytes, &image, &loaded, HHDM_OFFSET)?;
+    limine::Limine::prepare(&bytes, &image, &loaded, modules, HHDM_OFFSET)?;
 
     // This initial map keeps the firmware's low address space available while
     // mapping the kernel at its requested Limine virtual addresses.
@@ -186,7 +200,6 @@ fn boot_limine(bytes: &[u8]) -> Result<Infallible, &'static str> {
             segment.flags,
         )?;
     }
-
     let entry = image.entry;
     log::debug!("r-boot: entering Limine kernel at {entry:#x}");
 
