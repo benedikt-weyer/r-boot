@@ -41,12 +41,28 @@ pub fn locate() -> Option<Logo> {
             .map(|entry| entry.address as usize)
     })?;
 
-    let bgrt = find_bgrt(rsdp_addr)?;
-    decode_bmp(
-        bgrt.image_address as usize,
-        bgrt.offset_x as usize,
-        bgrt.offset_y as usize,
-    )
+    let Some(bgrt) = find_bgrt(rsdp_addr) else {
+        log::info!("r-boot: DEBUG no BGRT table found");
+        return None;
+    };
+    let image_address = bgrt.image_address;
+    let offset_x = bgrt.offset_x;
+    let offset_y = bgrt.offset_y;
+    log::info!(
+        "r-boot: DEBUG BGRT found image_address={image_address:#x} offset=({offset_x},{offset_y})"
+    );
+    let logo = decode_bmp(image_address as usize, offset_x as usize, offset_y as usize);
+    match &logo {
+        Some(logo) => log::info!(
+            "r-boot: DEBUG decoded logo {}x{} at ({},{})",
+            logo.width,
+            logo.height,
+            logo.x,
+            logo.y
+        ),
+        None => log::info!("r-boot: DEBUG failed to decode BMP at BGRT image address"),
+    }
+    logo
 }
 
 #[allow(dead_code)]
