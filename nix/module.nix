@@ -11,8 +11,6 @@ let
 
   timeoutStr = if config.boot.loader.timeout == null then "0" else toString config.boot.loader.timeout;
 
-  builder = import ./r-boot-conf-builder.nix { inherit lib pkgs; };
-
   builderArgs =
     "-t ${timeoutStr} -d '${efi.efiSysMountPoint}' -b '${cfg.package}/EFI/BOOT/BOOTX64.EFI'"
     + " -g ${toString cfg.configurationLimit}"
@@ -20,7 +18,7 @@ let
 
   installBootLoader = pkgs.writeShellScript "install-r-boot.sh" ''
     set -e
-    ${builder} ${builderArgs} -c "$@"
+    ${cfg.package}/bin/r-boot-conf-builder ${builderArgs} -c "$@"
   '';
 in
 {

@@ -3,7 +3,7 @@
 `r-boot` is a Rust UEFI bootloader. It implements the Limine boot protocol for
 x86_64 higher-half, `ET_EXEC` ELF kernels and the Linux x86 EFI 64-bit handover
 protocol for standard `vmlinuz` kernels. The protocol
-boundary is [`src/protocol.rs`](src/protocol.rs); later backends can implement
+boundary is [`crates/r-boot/src/protocol.rs`](crates/r-boot/src/protocol.rs); later backends can implement
 the same `BootProtocol` trait without changing the UEFI file-loading or paging
 code.
 

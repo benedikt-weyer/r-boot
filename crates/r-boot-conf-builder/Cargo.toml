@@ -1,0 +1,9 @@
+[package]
+name = "r-boot-conf-builder"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "r-boot-conf-builder"
+path = "src/main.rs"

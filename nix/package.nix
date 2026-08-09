@@ -2,6 +2,9 @@
   lib,
   rust,
   makeRustPlatform,
+  makeWrapper,
+  efibootmgr,
+  util-linux,
 }:
 let
   rustPlatform = makeRustPlatform {
@@ -29,15 +32,22 @@ rustPlatform.buildRustPackage {
   # UEFI COFF linker doesn't understand.
   auditable = false;
 
+  nativeBuildInputs = [ makeWrapper ];
+
   # rustPlatform's own cargoBuildHook always targets the derivation's
   # stdenv.hostPlatform (nixpkgs' cross machinery), which has no bearing on
   # rust-overlay's `x86_64-unknown-uefi` target support used here. Drive
   # cargo directly instead; cargoSetupHook has already vendored the
   # dependencies and configured cargo for an offline, `--target`-independent
   # build.
+  #
+  # `r-boot-conf-builder` is a std, host-target binary (it runs as
+  # `nixos-rebuild`'s installBootLoader, not inside UEFI), so it's built
+  # separately from the no_std `r-boot` UEFI executable.
   buildPhase = ''
     runHook preBuild
-    cargo build --release --target x86_64-unknown-uefi --offline -j "$NIX_BUILD_CORES"
+    cargo build --release --target x86_64-unknown-uefi --offline -j "$NIX_BUILD_CORES" -p r-boot
+    cargo build --release --offline -j "$NIX_BUILD_CORES" -p r-boot-conf-builder
     runHook postBuild
   '';
 
@@ -47,6 +57,9 @@ rustPlatform.buildRustPackage {
   installPhase = ''
     runHook preInstall
     install -D target/x86_64-unknown-uefi/release/r-boot.efi $out/EFI/BOOT/BOOTX64.EFI
+    install -D target/release/r-boot-conf-builder $out/bin/r-boot-conf-builder
+    wrapProgram $out/bin/r-boot-conf-builder \
+      --prefix PATH : ${lib.makeBinPath [ efibootmgr util-linux ]}
     runHook postInstall
   '';
 
