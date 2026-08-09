@@ -10,6 +10,7 @@ use uefi::proto::console::text::{Key, ScanCode};
 use uefi::{CString16, cstr16, system};
 
 use crate::spinner::Mode as SpinnerMode;
+use crate::splash::Image as SplashImage;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -26,6 +27,7 @@ pub struct Entry {
     pub kernel: String,
     pub initrds: Vec<String>,
     pub options: Option<String>,
+    pub image: Option<SplashImage>,
 }
 
 #[derive(Debug)]
@@ -138,7 +140,7 @@ impl Menu {
                     return Ok(selected);
                 }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
-                    if self.edit_config(fs)? {
+                    if self.edit_config(fs, selected)? {
                         timeout = self.timeout.unwrap_or(5);
                         if timeout > 0 {
                             boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
@@ -153,13 +155,18 @@ impl Menu {
     }
 
     /// Lets the user persist boot-menu preferences to `boot/r-boot.toml`.
-    fn edit_config(&mut self, fs: &mut FileSystem) -> Result<bool, &'static str> {
+    fn edit_config(
+        &mut self,
+        fs: &mut FileSystem,
+        entry_index: usize,
+    ) -> Result<bool, &'static str> {
         let mut timeout = self.timeout.unwrap_or(5);
         let mut spinner_mode = self.spinner_mode;
         let mut logo_visible = self.logo_visible;
+        let mut image = self.entries[entry_index].image;
         let mut selected = 0;
         loop {
-            self.draw_config(timeout, spinner_mode, logo_visible, selected);
+            self.draw_config(timeout, spinner_mode, logo_visible, image, selected);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -168,24 +175,39 @@ impl Menu {
                 .map_err(|_| "cannot read keyboard input")?;
             match key {
                 Some(Key::Special(ScanCode::UP)) => selected = selected.saturating_sub(1),
-                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 3,
+                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 4,
                 Some(Key::Special(ScanCode::LEFT)) => match selected {
                     0 => timeout = timeout.saturating_sub(1),
                     1 => spinner_mode = spinner_mode.previous(),
                     2 => logo_visible = !logo_visible,
+                    3 => image = image.and_then(SplashImage::previous),
                     _ => unreachable!(),
                 },
                 Some(Key::Special(ScanCode::RIGHT)) => match selected {
                     0 => timeout = timeout.saturating_add(1),
                     1 => spinner_mode = spinner_mode.next(),
                     2 => logo_visible = !logo_visible,
+                    3 => {
+                        image = match image {
+                            None => Some(SplashImage::Nixos),
+                            Some(image) => image.next(),
+                        }
+                    }
                     _ => unreachable!(),
                 },
                 Some(Key::Printable(character)) if character == '\r' => {
-                    persist_settings(fs, timeout, spinner_mode, logo_visible)?;
+                    persist_settings(
+                        fs,
+                        timeout,
+                        spinner_mode,
+                        logo_visible,
+                        &self.entries[entry_index].id,
+                        image,
+                    )?;
                     self.timeout = Some(timeout);
                     self.spinner_mode = spinner_mode;
                     self.logo_visible = logo_visible;
+                    self.entries[entry_index].image = image;
                     return Ok(true);
                 }
                 Some(Key::Special(ScanCode::ESCAPE)) => return Ok(false),
@@ -199,6 +221,7 @@ impl Menu {
         timeout: u64,
         spinner_mode: SpinnerMode,
         logo_visible: bool,
+        image: Option<SplashImage>,
         selected: usize,
     ) {
         self.clear();
@@ -207,11 +230,16 @@ impl Menu {
         let timeout_marker = if selected == 0 { '>' } else { ' ' };
         let spinner_marker = if selected == 1 { '>' } else { ' ' };
         let logo_marker = if selected == 2 { '>' } else { ' ' };
+        let image_marker = if selected == 3 { '>' } else { ' ' };
         uefi::println!("{timeout_marker} Timeout: {timeout}s");
         uefi::println!("{spinner_marker} Spinner: {}", spinner_mode.as_str());
         uefi::println!(
             "{logo_marker} Firmware logo: {}",
             if logo_visible { "on" } else { "off" }
+        );
+        uefi::println!(
+            "{image_marker} Selected entry image: {}",
+            image.map(SplashImage::as_str).unwrap_or("none")
         );
         uefi::println!();
         uefi::println!("Use Up/Down to select, Left/Right to change.");
@@ -411,6 +439,13 @@ impl Menu {
             kernel,
             initrds: raw.initrds,
             options: raw.options,
+            image: raw.image.as_deref().and_then(|value| {
+                let image = SplashImage::parse(value);
+                if image.is_none() {
+                    log::warn!("r-boot: ignoring unknown splash image");
+                }
+                image
+            }),
         });
     }
 }
@@ -464,6 +499,7 @@ struct RawEntry {
     kernel: Option<String>,
     initrds: Vec<String>,
     options: Option<String>,
+    image: Option<String>,
 }
 
 impl RawEntry {
@@ -479,6 +515,7 @@ impl RawEntry {
             }
             "initrd" => self.initrds.push(value.to_string()),
             "options" => self.options = Some(value.to_string()),
+            "image" => self.image = Some(value.to_string()),
             _ => {}
         }
     }
@@ -541,13 +578,14 @@ fn shell_words(line: &str) -> Vec<String> {
     words
 }
 
-/// Updates only r-boot's top-level settings, preserving generated entries and
-/// any comments in the existing configuration.
+/// Updates r-boot's settings and the selected entry's splash image.
 fn persist_settings(
     fs: &mut FileSystem,
     timeout: u64,
     spinner_mode: SpinnerMode,
     logo_visible: bool,
+    entry_id: &str,
+    image: Option<SplashImage>,
 ) -> Result<(), &'static str> {
     let path = Path::new(cstr16!("\\boot\\r-boot.toml"));
     let contents = fs.read_to_string(path).unwrap_or_default();
@@ -558,22 +596,69 @@ fn persist_settings(
     updated.push_str("\"\nlogo = ");
     updated.push_str(if logo_visible { "true\n" } else { "false\n" });
     let mut entries_started = false;
+    let mut entry_lines = Vec::new();
 
     for line in contents.lines() {
         let trimmed = strip_comment(line).trim();
         if trimmed == "[[entries]]" {
+            append_entry(&mut updated, &entry_lines, entry_id, image);
+            entry_lines.clear();
             entries_started = true;
         }
+        if entries_started {
+            entry_lines.push(line);
+            continue;
+        }
         let key = trimmed.split_once('=').map(|(key, _)| key.trim());
-        if !entries_started && matches!(key, Some("timeout" | "spinner" | "logo")) {
+        if matches!(key, Some("timeout" | "spinner" | "logo")) {
             continue;
         }
         updated.push_str(line);
         updated.push('\n');
     }
+    append_entry(&mut updated, &entry_lines, entry_id, image);
 
     fs.write(path, updated.as_bytes())
         .map_err(|_| "cannot save boot configuration")
+}
+
+fn append_entry(updated: &mut String, lines: &[&str], entry_id: &str, image: Option<SplashImage>) {
+    let is_selected = lines.iter().any(|line| {
+        let trimmed = strip_comment(line).trim();
+        trimmed
+            .split_once('=')
+            .is_some_and(|(key, value)| key.trim() == "id" && unquote(value.trim()) == entry_id)
+    });
+    let has_image = lines.iter().any(|line| {
+        strip_comment(line)
+            .trim()
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim() == "image")
+    });
+
+    for line in lines {
+        let key = strip_comment(line)
+            .trim()
+            .split_once('=')
+            .map(|(key, _)| key.trim());
+        if is_selected && key == Some("image") {
+            if let Some(image) = image {
+                updated.push_str("image = \"");
+                updated.push_str(image.as_str());
+                updated.push_str("\"\n");
+            }
+            continue;
+        }
+        updated.push_str(line);
+        updated.push('\n');
+        if is_selected && !has_image && key == Some("id") {
+            if let Some(image) = image {
+                updated.push_str("image = \"");
+                updated.push_str(image.as_str());
+                updated.push_str("\"\n");
+            }
+        }
+    }
 }
 
 pub fn path(value: &str) -> Result<PathBuf, &'static str> {

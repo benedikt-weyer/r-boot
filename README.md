@@ -44,8 +44,9 @@ required for explicit 64-bit boot-parameter handoff.
 
 Use Up/Down and Enter to select an entry. The selected default boots after
 five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
-Press `c` to edit the timeout, spinner mode, and firmware-logo visibility;
-saving writes these settings back to `boot/r-boot.toml`.
+Press `c` to edit the timeout, spinner mode, firmware-logo visibility, and
+the selected entry's splash image; saving writes these settings back to
+`boot/r-boot.toml`.
 When neither source contains entries, the original fixed
 `boot/vmlinuz` + `boot/initramfs` or `boot/kernel.elf` layouts remain supported.
 
@@ -53,6 +54,8 @@ The native format deliberately uses a small TOML subset: quoted strings,
 integer `timeout`, `spinner = "off" | "text" | "graphical"`, `logo = true |
 false`, and repeated `[[entries]]` tables. The spinner defaults to graphical
 rendering and the firmware logo is shown by default.
+Entries may set `image = "nixos"` or `image = "linux"` to replace the firmware
+logo with a built-in NixOS or Linux penguin splash while that entry boots.
 
 ```toml
 default = "alpine"
@@ -64,6 +67,7 @@ logo = true
 id = "alpine"
 title = "Alpine Linux"
 kind = "linux"
+image = "nixos"
 linux = "/boot/vmlinuz-virt"
 initrd = "/boot/initramfs-virt"
 options = "console=ttyS0 quiet"

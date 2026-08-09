@@ -15,7 +15,7 @@ use uefi::proto::console::gop::{BltOp, BltPixel, BltRegion, GraphicsOutput};
 use uefi::system;
 use uefi::table::cfg::ConfigTableEntry;
 
-/// A decoded boot logo, ready to be blitted onto the GOP framebuffer.
+/// A raster image ready to be blitted onto the GOP framebuffer.
 pub struct Logo {
     pub x: usize,
     pub y: usize,
@@ -63,6 +63,16 @@ pub fn locate() -> Option<Logo> {
         None => log::debug!("r-boot: failed to decode BMP at BGRT image address"),
     }
     logo
+}
+
+/// Decodes a trusted, statically embedded 24- or 32-bit BMP.
+pub fn decode_bmp_bytes(bytes: &[u8]) -> Option<Logo> {
+    if bytes.len() < size_of::<BmpFileHeader>() + size_of::<BmpInfoHeader>() {
+        return None;
+    }
+    // SAFETY: callers provide compile-time embedded BMP assets. `decode_bmp`
+    // validates their format before allocating and decoding their pixels.
+    decode_bmp(bytes.as_ptr() as usize, 0, 0)
 }
 
 /// Draws the firmware logo at the specified framebuffer position.

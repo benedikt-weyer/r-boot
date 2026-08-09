@@ -12,6 +12,7 @@ pub struct Entry {
     pub kind: Option<String>,
     pub linux: Option<String>,
     pub efi: Option<String>,
+    pub image: Option<String>,
     pub initrd: Vec<String>,
     pub options: Option<String>,
 }
@@ -54,6 +55,7 @@ impl Config {
                     "kind" => entry.kind = Some(value.to_string()),
                     "linux" => entry.linux = Some(value.to_string()),
                     "efi" => entry.efi = Some(value.to_string()),
+                    "image" => entry.image = Some(value.to_string()),
                     "initrd" => entry.initrd.push(value.to_string()),
                     "options" => entry.options = Some(value.to_string()),
                     _ => {}
@@ -104,6 +106,9 @@ impl Config {
             if let Some(efi) = &entry.efi {
                 let _ = writeln!(out, "efi = \"{efi}\"");
             }
+            if let Some(image) = &entry.image {
+                let _ = writeln!(out, "image = \"{image}\"");
+            }
             for initrd in &entry.initrd {
                 let _ = writeln!(out, "initrd = \"{initrd}\"");
             }
@@ -143,6 +148,7 @@ logo = true
 id = \"nixos-default\"
 title = \"NixOS (24.11, nixos-default)\"
 kind = \"linux\"
+image = \"nixos\"
 linux = \"/boot/nixos/kernel\"
 initrd = \"/boot/nixos/initrd\"
 options = \"init=/nix/store/foo/init\"
@@ -154,6 +160,7 @@ options = \"init=/nix/store/foo/init\"
         assert_eq!(config.logo, Some(true));
         assert_eq!(config.entries.len(), 1);
         assert_eq!(config.entries[0].id, "nixos-default");
+        assert_eq!(config.entries[0].image.as_deref(), Some("nixos"));
         assert_eq!(
             config.entries[0].linux.as_deref(),
             Some("/boot/nixos/kernel")

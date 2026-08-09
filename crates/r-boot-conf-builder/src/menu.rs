@@ -60,7 +60,7 @@ pub fn add_entry(
     let options = format!("init={} {extra_params}", init.display());
 
     Ok(Some(format!(
-        "\n[[entries]]\nid = \"{id}\"\ntitle = \"NixOS ({nixos_label}, {id})\"\nkind = \"linux\"\nlinux = \"{kernel}\"\ninitrd = \"{initrd}\"\noptions = \"{options}\"\n"
+        "\n[[entries]]\nid = \"{id}\"\ntitle = \"NixOS ({nixos_label}, {id})\"\nkind = \"linux\"\nimage = \"nixos\"\nlinux = \"{kernel}\"\ninitrd = \"{initrd}\"\noptions = \"{options}\"\n"
     )))
 }
 

@@ -12,6 +12,7 @@ use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::proto::console::gop::{BltOp, BltPixel, BltRegion, GraphicsOutput};
 
 use crate::bgrt;
+use crate::splash::Image as SplashImage;
 
 const SIZE: usize = 48;
 const DOT_RADIUS: i32 = 3;
@@ -81,7 +82,8 @@ pub struct Spinner {
     index: usize,
     buffer: Vec<BltPixel>,
     last_position: Option<(usize, usize)>,
-    logo: Option<bgrt::Logo>,
+    firmware_logo: Option<bgrt::Logo>,
+    entry_logo: Option<bgrt::Logo>,
 }
 
 impl Spinner {
@@ -91,7 +93,8 @@ impl Spinner {
             index: 0,
             buffer: vec![BACKGROUND; SIZE * SIZE],
             last_position: None,
-            logo: show_logo.then(bgrt::locate).flatten(),
+            firmware_logo: show_logo.then(bgrt::locate).flatten(),
+            entry_logo: None,
         }
     }
 
@@ -102,7 +105,12 @@ impl Spinner {
     }
 
     pub fn set_logo_visible(&mut self, visible: bool) {
-        self.logo = visible.then(bgrt::locate).flatten();
+        self.firmware_logo = visible.then(bgrt::locate).flatten();
+    }
+
+    /// Uses the selected entry's built-in splash image in place of firmware art.
+    pub fn set_entry_image(&mut self, image: Option<SplashImage>) {
+        self.entry_logo = image.and_then(SplashImage::render);
     }
 
     /// Advances one frame using the configured output mode.
@@ -127,7 +135,7 @@ impl Spinner {
             return;
         }
         let position = ((width - SIZE) / 2, (height - SIZE) / 2);
-        if let Some(logo) = self.logo.as_ref() {
+        if let Some(logo) = self.entry_logo.as_ref().or(self.firmware_logo.as_ref()) {
             let logo_x = width.checked_sub(logo.width).map(|remaining| remaining / 2);
             let logo_y = logo
                 .height

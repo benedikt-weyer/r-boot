@@ -11,6 +11,7 @@ mod menu;
 mod paging;
 mod protocol;
 mod spinner;
+mod splash;
 
 use alloc::vec::Vec;
 use core::convert::Infallible;
@@ -61,6 +62,7 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
         spinner.set_mode(menu.spinner_mode());
         spinner.set_logo_visible(menu.logo_visible());
         let entry = menu.entries.swap_remove(selected);
+        spinner.set_entry_image(entry.image);
         uefi::println!("Booting {}...", entry.title);
         return match entry.kind {
             menu::Kind::Linux => {
