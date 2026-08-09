@@ -19,7 +19,7 @@ if [[ -z "$kernel" || ! -f "$kernel" ]]; then
   exit 2
 fi
 
-cargo build --release --target x86_64-unknown-uefi
+cargo build --release --target x86_64-unknown-uefi -p r-boot
 rm -rf "$build"
 mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot"
 cp "$root/target/x86_64-unknown-uefi/release/r-boot.efi" "$build/esp/EFI/BOOT/BOOTX64.EFI"

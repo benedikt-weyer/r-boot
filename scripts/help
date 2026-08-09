@@ -7,9 +7,9 @@ r-boot developer commands
   nix develop                 enter the reproducible toolchain
   direnv allow                enable the dev shell automatically
   cargo fmt --check           check Rust formatting
-  cargo clippy --target x86_64-unknown-uefi -- -D warnings
+  cargo clippy --target x86_64-unknown-uefi -p r-boot -- -D warnings
                               lint the UEFI application
-  cargo build --release --target x86_64-unknown-uefi
+  cargo build --release --target x86_64-unknown-uefi -p r-boot
                               build EFI/BOOT/BOOTX64.EFI source image
   ./build-efi [output-path]
                               build and copy BOOTX64.EFI (default: target/EFI/BOOT/)
