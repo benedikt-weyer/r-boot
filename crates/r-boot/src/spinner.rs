@@ -11,6 +11,8 @@ use alloc::vec::Vec;
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::proto::console::gop::{BltOp, BltPixel, BltRegion, GraphicsOutput};
 
+use crate::bgrt;
+
 const SIZE: usize = 48;
 const DOT_RADIUS: i32 = 3;
 const DOTS: [(i32, i32); 12] = [
@@ -79,6 +81,7 @@ pub struct Spinner {
     index: usize,
     buffer: Vec<BltPixel>,
     last_position: Option<(usize, usize)>,
+    logo: Option<bgrt::Logo>,
 }
 
 impl Spinner {
@@ -88,6 +91,7 @@ impl Spinner {
             index: 0,
             buffer: vec![BACKGROUND; SIZE * SIZE],
             last_position: None,
+            logo: bgrt::locate(),
         }
     }
 
@@ -119,6 +123,16 @@ impl Spinner {
             return;
         }
         let position = ((width - SIZE) / 2, (height - SIZE) / 2);
+        if let Some(logo) = self.logo.as_ref() {
+            let logo_x = width.checked_sub(logo.width).map(|remaining| remaining / 2);
+            let logo_y = logo
+                .height
+                .checked_add(SIZE / 2)
+                .and_then(|offset| position.1.checked_sub(offset));
+            if let (Some(logo_x), Some(logo_y)) = (logo_x, logo_y) {
+                bgrt::draw(&mut gop, logo, (logo_x, logo_y));
+            }
+        }
         self.render_frame();
         if gop
             .blt(BltOp::BufferToVideo {
@@ -181,6 +195,19 @@ impl Spinner {
             }
         }
     }
+}
+
+/// Clears the entire graphics framebuffer to black when GOP is available.
+pub fn clear_screen() {
+    let Ok(mut gop) = open_gop() else {
+        return;
+    };
+    let dimensions = gop.current_mode_info().resolution();
+    let _ = gop.blt(BltOp::VideoFill {
+        color: BACKGROUND,
+        dest: (0, 0),
+        dims: dimensions,
+    });
 }
 
 fn open_gop() -> Result<uefi::boot::ScopedProtocol<GraphicsOutput>, uefi::Error> {

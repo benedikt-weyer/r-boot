@@ -4,13 +4,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use uefi::boot::{self, EventType, OpenProtocolAttributes, OpenProtocolParams, TimerTrigger, Tpl};
+use uefi::boot::{self, EventType, TimerTrigger, Tpl};
 use uefi::fs::{FileSystem, Path, PathBuf};
-use uefi::proto::console::gop::{BltOp, BltRegion, GraphicsOutput};
 use uefi::proto::console::text::{Key, ScanCode};
 use uefi::{CString16, cstr16, system};
 
-use crate::bgrt;
 use crate::spinner::Mode as SpinnerMode;
 
 #[derive(Debug)]
@@ -68,6 +66,7 @@ impl Menu {
         system::with_stdout(|output| {
             let _ = output.clear();
         });
+        crate::spinner::clear_screen();
     }
 
     pub fn select(&mut self, fs: &mut FileSystem) -> Result<usize, &'static str> {
@@ -87,11 +86,9 @@ impl Menu {
         boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
             .map_err(|_| "cannot set boot-menu timeout")?;
 
-        let logo = bgrt::locate();
-
         let mut remaining = Some(timeout);
         loop {
-            self.draw(selected, remaining, logo.as_ref());
+            self.draw(selected, remaining);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             match remaining {
@@ -135,7 +132,7 @@ impl Menu {
                     return Ok(selected);
                 }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
-                    if self.edit_config(fs, logo.as_ref())? {
+                    if self.edit_config(fs)? {
                         timeout = self.timeout.unwrap_or(5);
                         if timeout > 0 {
                             boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
@@ -150,16 +147,12 @@ impl Menu {
     }
 
     /// Lets the user persist boot-menu preferences to `boot/r-boot.toml`.
-    fn edit_config(
-        &mut self,
-        fs: &mut FileSystem,
-        logo: Option<&bgrt::Logo>,
-    ) -> Result<bool, &'static str> {
+    fn edit_config(&mut self, fs: &mut FileSystem) -> Result<bool, &'static str> {
         let mut timeout = self.timeout.unwrap_or(5);
         let mut spinner_mode = self.spinner_mode;
         let mut selected = 0;
         loop {
-            self.draw_config(timeout, spinner_mode, selected, logo);
+            self.draw_config(timeout, spinner_mode, selected);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -191,19 +184,8 @@ impl Menu {
         }
     }
 
-    fn draw_config(
-        &self,
-        timeout: u64,
-        spinner_mode: SpinnerMode,
-        selected: usize,
-        logo: Option<&bgrt::Logo>,
-    ) {
-        system::with_stdout(|output| {
-            let _ = output.clear();
-        });
-        if let Some(logo) = logo {
-            draw_logo(logo);
-        }
+    fn draw_config(&self, timeout: u64, spinner_mode: SpinnerMode, selected: usize) {
+        self.clear();
         uefi::println!("r-boot configuration");
         uefi::println!();
         let timeout_marker = if selected == 0 { '>' } else { ' ' };
@@ -229,11 +211,8 @@ impl Menu {
             .unwrap_or(0)
     }
 
-    fn draw(&self, selected: usize, remaining: Option<u64>, logo: Option<&bgrt::Logo>) {
+    fn draw(&self, selected: usize, remaining: Option<u64>) {
         self.clear();
-        if let Some(logo) = logo {
-            draw_logo(logo);
-        }
         uefi::println!("r-boot");
         match remaining {
             Some(seconds) => uefi::println!("Select an entry (boots in {seconds}s):"),
@@ -434,41 +413,6 @@ pub fn configured_spinner_mode(fs: &mut FileSystem) -> SpinnerMode {
         }
     }
     SpinnerMode::default()
-}
-
-/// Blits the firmware's boot logo (as located via [`bgrt::locate`]) onto the
-/// GOP framebuffer at the position the firmware itself drew it. Opened with
-/// `GetProtocol` rather than exclusively, so the text console driver keeps
-/// its own hold on the GOP and `uefi::println!` keeps working afterwards.
-fn draw_logo(logo: &bgrt::Logo) {
-    let Ok(handle) = boot::get_handle_for_protocol::<GraphicsOutput>() else {
-        return;
-    };
-    let params = OpenProtocolParams {
-        handle,
-        agent: boot::image_handle(),
-        controller: None,
-    };
-    // SAFETY: `GetProtocol` is a read-only, non-exclusive open; we only blit
-    // a buffer we own and never reconfigure the video mode, so this cannot
-    // invalidate any other outstanding user of the protocol.
-    let Ok(mut gop) = (unsafe {
-        boot::open_protocol::<GraphicsOutput>(params, OpenProtocolAttributes::GetProtocol)
-    }) else {
-        return;
-    };
-    let (width, height) = gop.current_mode_info().resolution();
-    if logo.x + logo.width > width || logo.y + logo.height > height {
-        // The video mode changed since the firmware drew the logo; skip it
-        // rather than risk an out-of-bounds blit.
-        return;
-    }
-    let _ = gop.blt(BltOp::BufferToVideo {
-        buffer: &logo.pixels,
-        src: BltRegion::Full,
-        dest: (logo.x, logo.y),
-        dims: (logo.width, logo.height),
-    });
 }
 
 #[derive(Default)]

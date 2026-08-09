@@ -11,7 +11,7 @@
 use alloc::vec::Vec;
 use core::mem::size_of;
 
-use uefi::proto::console::gop::BltPixel;
+use uefi::proto::console::gop::{BltOp, BltPixel, BltRegion, GraphicsOutput};
 use uefi::system;
 use uefi::table::cfg::ConfigTableEntry;
 
@@ -63,6 +63,20 @@ pub fn locate() -> Option<Logo> {
         None => log::debug!("r-boot: failed to decode BMP at BGRT image address"),
     }
     logo
+}
+
+/// Draws the firmware logo at the specified framebuffer position.
+pub fn draw(gop: &mut GraphicsOutput, logo: &Logo, position: (usize, usize)) {
+    let (width, height) = gop.current_mode_info().resolution();
+    if position.0 + logo.width > width || position.1 + logo.height > height {
+        return;
+    }
+    let _ = gop.blt(BltOp::BufferToVideo {
+        buffer: &logo.pixels,
+        src: BltRegion::Full,
+        dest: position,
+        dims: (logo.width, logo.height),
+    });
 }
 
 #[allow(dead_code)]

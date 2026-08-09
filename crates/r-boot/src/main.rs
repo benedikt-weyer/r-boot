@@ -30,6 +30,7 @@ fn main() -> Status {
     uefi::system::with_stdout(|output| {
         let _ = output.clear();
     });
+    spinner::clear_screen();
     log::info!("r-boot: selecting boot protocol");
 
     match boot_kernel() {
