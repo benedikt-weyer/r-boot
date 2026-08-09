@@ -41,13 +41,14 @@ rustPlatform.buildRustPackage {
   # dependencies and configured cargo for an offline, `--target`-independent
   # build.
   #
-  # `r-boot-conf-builder` is a std, host-target binary (it runs as
-  # `nixos-rebuild`'s installBootLoader, not inside UEFI), so it's built
-  # separately from the no_std `r-boot` UEFI executable.
+  # `r-boot-conf-builder` and `r-boot-cli` are std, host-target binaries
+  # (they run as `nixos-rebuild`'s installBootLoader and as a user-facing
+  # inspection/editing tool, respectively, not inside UEFI), so they're
+  # built separately from the no_std `r-boot` UEFI executable.
   buildPhase = ''
     runHook preBuild
     cargo build --release --target x86_64-unknown-uefi --offline -j "$NIX_BUILD_CORES" -p r-boot
-    cargo build --release --offline -j "$NIX_BUILD_CORES" -p r-boot-conf-builder
+    cargo build --release --offline -j "$NIX_BUILD_CORES" -p r-boot-conf-builder -p r-boot-cli
     runHook postBuild
   '';
 
@@ -58,6 +59,7 @@ rustPlatform.buildRustPackage {
     runHook preInstall
     install -D target/x86_64-unknown-uefi/release/r-boot.efi $out/EFI/BOOT/BOOTX64.EFI
     install -D target/release/r-boot-conf-builder $out/bin/r-boot-conf-builder
+    install -D target/release/r-boot-cli $out/bin/r-boot-cli
     wrapProgram $out/bin/r-boot-conf-builder \
       --prefix PATH : ${lib.makeBinPath [ efibootmgr util-linux ]}
     runHook postInstall

@@ -34,6 +34,10 @@
             boot.loader.timeout = 5;
             boot.kernelParams = [ "console=ttyS0" ];
 
+            # Lets the smoke test (and anyone booting the image) inspect and
+            # tweak the running system's r-boot menu with `r-boot-cli`.
+            environment.systemPackages = [ self.packages.${system}.r-boot-cli ];
+
             fileSystems."/" = {
               device = "/dev/disk/by-label/nixos";
               fsType = "ext4";
@@ -55,6 +59,14 @@
 
       packages.${system} = {
         default = r-boot;
+
+        # `r-boot-cli` for inspecting/editing a running system's r-boot menu
+        # (`crates/r-boot-cli`), split out of the `r-boot` derivation's
+        # `$out/bin` so it can be depended on independently of the
+        # bootloader package.
+        r-boot-cli = pkgs.runCommand "r-boot-cli" { } ''
+          install -D ${r-boot}/bin/r-boot-cli $out/bin/r-boot-cli
+        '';
 
         # `nix build .#nixos-image` (wrapped by `scripts/build-nixos-image`)
         # produces a qcow2 disk image with r-boot installed to its ESP.

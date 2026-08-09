@@ -1,0 +1,108 @@
+//! Inspects and edits `r-boot.toml`, the menu config r-boot's UEFI menu
+//! reads at boot time. Changes made here persist until the next
+//! `nixos-rebuild switch` regenerates the file via `r-boot-conf-builder`.
+
+use std::error::Error;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+mod args;
+mod config;
+
+use args::{Args, Command};
+use config::Config;
+
+fn main() {
+    let args = match Args::parse(std::env::args().skip(1)) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("{err}");
+            Args::usage();
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(err) = run(&args) {
+        eprintln!("r-boot-cli: {err}");
+        std::process::exit(1);
+    }
+}
+
+fn run(args: &Args) -> Result<(), Box<dyn Error>> {
+    let config_path = args.esp.join("boot").join("r-boot.toml");
+
+    match &args.command {
+        Command::Show => show(&config_path),
+        Command::SetDefault(id) => set_default(&config_path, id),
+        Command::SetTimeout(seconds) => set_timeout(&config_path, *seconds),
+    }
+}
+
+fn show(config_path: &Path) -> Result<(), Box<dyn Error>> {
+    let config = load(config_path)?;
+
+    println!("config:   {}", config_path.display());
+    println!(
+        "default:  {}",
+        config.default.as_deref().unwrap_or("(unset, boots first entry)")
+    );
+    match config.timeout {
+        Some(0) => println!("timeout:  0 (boots default immediately)"),
+        Some(seconds) => println!("timeout:  {seconds}s"),
+        None => println!("timeout:  (unset, defaults to 5s)"),
+    }
+    println!();
+
+    if config.entries.is_empty() {
+        println!("no boot entries found");
+        return Ok(());
+    }
+
+    println!("entries:");
+    for entry in &config.entries {
+        let marker = if config.default.as_deref() == Some(entry.id.as_str()) {
+            '*'
+        } else {
+            ' '
+        };
+        let title = entry.title.as_deref().unwrap_or(&entry.id);
+        println!("  {marker} {} ({})", title, entry.id);
+    }
+
+    Ok(())
+}
+
+fn set_default(config_path: &Path, id: &str) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+
+    if !config.entries.iter().any(|entry| entry.id == id) {
+        let known: Vec<&str> = config.entries.iter().map(|e| e.id.as_str()).collect();
+        return Err(format!("no entry with id \"{id}\" (known ids: {})", known.join(", ")).into());
+    }
+
+    config.default = Some(id.to_string());
+    save(config_path, &config)?;
+    println!("default entry set to \"{id}\"");
+    Ok(())
+}
+
+fn set_timeout(config_path: &Path, seconds: u32) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+    config.timeout = Some(seconds);
+    save(config_path, &config)?;
+    println!("timeout set to {seconds}s");
+    Ok(())
+}
+
+fn load(config_path: &Path) -> Result<Config, Box<dyn Error>> {
+    let contents = fs::read_to_string(config_path)
+        .map_err(|e| format!("cannot read {}: {e}", config_path.display()))?;
+    Ok(Config::parse(&contents))
+}
+
+fn save(config_path: &Path, config: &Config) -> Result<(), Box<dyn Error>> {
+    let tmp_path: PathBuf = config_path.with_extension(format!("toml.tmp.{}", std::process::id()));
+    fs::write(&tmp_path, config.render())?;
+    fs::rename(&tmp_path, config_path)?;
+    Ok(())
+}

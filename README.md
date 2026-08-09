@@ -80,8 +80,9 @@ submenus, chainloading, or non-Linux commands are intentionally ignored.
 ## NixOS
 
 This repository is a flake exposing `packages.x86_64-linux.default` (the
-`BOOTX64.EFI` binary) and `nixosModules.default`, a `boot.loader.r-boot`
-implementation. Add it as an input to a NixOS system flake:
+`BOOTX64.EFI` binary), `packages.x86_64-linux.r-boot-cli`, and
+`nixosModules.default`, a `boot.loader.r-boot` implementation. Add it as an
+input to a NixOS system flake:
 
 ```nix
 {
@@ -110,11 +111,26 @@ their kernels/initrds into `boot/nixos` on the ESP, and installs the r-boot
 binary to `EFI/BOOT/BOOTX64.EFI`. With `boot.loader.efi.canTouchEfiVariables`
 it also registers a `r-boot` NVRAM boot entry via `efibootmgr`.
 
+`packages.x86_64-linux.r-boot-cli` (`crates/r-boot-cli`) is a small helper
+for inspecting and editing a running system's `boot/r-boot.toml` — showing
+the current default entry and timeout, and changing them until the next
+`nixos-rebuild switch` regenerates the file:
+
+```sh
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- show
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-default nixos-generation-41
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-timeout 10
+```
+
+Add `r-boot.packages.x86_64-linux.r-boot-cli` to `environment.systemPackages`
+to make `r-boot-cli` available on a NixOS system directly.
+
 `flake.nix` also defines `nixosConfigurations.r-boot-qemu`, a minimal NixOS
-system with `boot.loader.r-boot` enabled, and a `nixos-image` package that
-turns it into a qcow2 disk image via nixpkgs' `make-disk-image.nix`. Build
-and boot it to exercise r-boot as a real installed bootloader, rather than
-the fixed kernel/initrd layouts used by `run-linux-qemu`/`run-nixos-qemu`:
+system with `boot.loader.r-boot` enabled and `r-boot-cli` installed via
+`environment.systemPackages`, and a `nixos-image` package that turns it into
+a qcow2 disk image via nixpkgs' `make-disk-image.nix`. Build and boot it to
+exercise r-boot as a real installed bootloader, rather than the fixed
+kernel/initrd layouts used by `run-linux-qemu`/`run-nixos-qemu`:
 
 ```sh
 ./scripts/build-nixos-image

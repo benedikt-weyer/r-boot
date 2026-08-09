@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["crates/r-boot", "crates/r-boot-conf-builder"]
+members = ["crates/r-boot", "crates/r-boot-cli", "crates/r-boot-conf-builder"]
