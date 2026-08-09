@@ -58,7 +58,7 @@ impl Menu {
             return Err("no boot entries found");
         }
         let mut selected = self.default_index();
-        let timeout = self.timeout.unwrap_or(5);
+        let mut timeout = self.timeout.unwrap_or(5);
         if timeout == 0 {
             return Ok(selected);
         }
@@ -115,9 +115,52 @@ impl Menu {
                     let _ = boot::close_event(timer);
                     return Ok(selected);
                 }
+                Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
+                    if let Some(new_timeout) = self.edit_config(timeout)? {
+                        timeout = new_timeout;
+                        if timeout > 0 {
+                            boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
+                                .map_err(|_| "cannot restart boot-menu timeout")?;
+                            remaining = Some(timeout);
+                        }
+                    }
+                }
                 _ => continue,
             }
         }
+    }
+
+    /// Lets the user adjust the boot-menu timeout for the current boot.
+    /// Returns the new timeout on save, or `None` if the edit was cancelled.
+    fn edit_config(&self, current_timeout: u64) -> Result<Option<u64>, &'static str> {
+        let mut value = current_timeout;
+        loop {
+            self.draw_config(value);
+            let key_event = system::with_stdin(|input| input.wait_for_key_event())
+                .map_err(|_| "keyboard input is unavailable")?;
+            let mut events = unsafe { [key_event.unsafe_clone()] };
+            boot::wait_for_event(&mut events).map_err(|_| "cannot wait for keyboard input")?;
+            let key = system::with_stdin(|input| input.read_key())
+                .map_err(|_| "cannot read keyboard input")?;
+            match key {
+                Some(Key::Special(ScanCode::UP)) => value = value.saturating_add(1),
+                Some(Key::Special(ScanCode::DOWN)) => value = value.saturating_sub(1),
+                Some(Key::Printable(character)) if character == '\r' => return Ok(Some(value)),
+                Some(Key::Special(ScanCode::ESCAPE)) => return Ok(None),
+                _ => continue,
+            }
+        }
+    }
+
+    fn draw_config(&self, timeout: u64) {
+        system::with_stdout(|output| {
+            let _ = output.clear();
+        });
+        uefi::println!("r-boot configuration");
+        uefi::println!();
+        uefi::println!("Timeout: {timeout}s");
+        uefi::println!();
+        uefi::println!("Use Up/Down to adjust, Enter to save, Esc to cancel.");
     }
 
     fn default_index(&self) -> usize {
@@ -149,7 +192,7 @@ impl Menu {
             uefi::println!("{marker} {}", entry.title);
         }
         uefi::println!();
-        uefi::println!("Use Up/Down and Enter.");
+        uefi::println!("Use Up/Down and Enter. Press c to configure.");
     }
 
     fn parse_toml(&mut self, contents: &str) {
