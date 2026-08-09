@@ -20,6 +20,7 @@ pub struct Entry {
 pub struct Config {
     pub default: Option<String>,
     pub timeout: Option<u32>,
+    pub spinner: Option<String>,
     pub entries: Vec<Entry>,
 }
 
@@ -59,6 +60,7 @@ impl Config {
                 None => match key {
                     "default" => config.default = Some(value.to_string()),
                     "timeout" => config.timeout = value.parse().ok(),
+                    "spinner" => config.spinner = Some(value.to_string()),
                     _ => {}
                 },
             }
@@ -77,6 +79,9 @@ impl Config {
         }
         if let Some(timeout) = self.timeout {
             let _ = writeln!(out, "timeout = {timeout}");
+        }
+        if let Some(spinner) = &self.spinner {
+            let _ = writeln!(out, "spinner = \"{spinner}\"");
         }
         for entry in &self.entries {
             out.push('\n');
@@ -126,6 +131,7 @@ mod tests {
 # Generated file, all changes will be lost on nixos-rebuild!
 default = \"nixos-default\"
 timeout = 5
+spinner = \"graphical\"
 
 [[entries]]
 id = \"nixos-default\"
@@ -138,13 +144,18 @@ options = \"init=/nix/store/foo/init\"
         let config = Config::parse(contents);
         assert_eq!(config.default.as_deref(), Some("nixos-default"));
         assert_eq!(config.timeout, Some(5));
+        assert_eq!(config.spinner.as_deref(), Some("graphical"));
         assert_eq!(config.entries.len(), 1);
         assert_eq!(config.entries[0].id, "nixos-default");
-        assert_eq!(config.entries[0].linux.as_deref(), Some("/boot/nixos/kernel"));
+        assert_eq!(
+            config.entries[0].linux.as_deref(),
+            Some("/boot/nixos/kernel")
+        );
 
         let reparsed = Config::parse(&config.render());
         assert_eq!(reparsed.default, config.default);
         assert_eq!(reparsed.timeout, config.timeout);
+        assert_eq!(reparsed.spinner, config.spinner);
         assert_eq!(reparsed.entries.len(), config.entries.len());
     }
 }

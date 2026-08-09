@@ -44,15 +44,19 @@ required for explicit 64-bit boot-parameter handoff.
 
 Use Up/Down and Enter to select an entry. The selected default boots after
 five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
+Press `c` to edit the timeout and spinner mode; saving writes these settings
+back to `boot/r-boot.toml`.
 When neither source contains entries, the original fixed
 `boot/vmlinuz` + `boot/initramfs` or `boot/kernel.elf` layouts remain supported.
 
 The native format deliberately uses a small TOML subset: quoted strings,
-integer `timeout`, and repeated `[[entries]]` tables.
+integer `timeout`, `spinner = "off" | "text" | "graphical"`, and repeated
+`[[entries]]` tables. The spinner defaults to graphical rendering.
 
 ```toml
 default = "alpine"
 timeout = 5
+spinner = "graphical"
 
 [[entries]]
 id = "alpine"
@@ -113,13 +117,14 @@ it also registers a `r-boot` NVRAM boot entry via `efibootmgr`.
 
 `packages.x86_64-linux.r-boot-cli` (`crates/r-boot-cli`) is a small helper
 for inspecting and editing a running system's `boot/r-boot.toml` — showing
-the current default entry and timeout, and changing them until the next
+the current default entry, timeout, and spinner mode, and changing them until the next
 `nixos-rebuild switch` regenerates the file:
 
 ```sh
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- show
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-default nixos-generation-41
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-timeout 10
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-spinner text
 ```
 
 Add `r-boot.packages.x86_64-linux.r-boot-cli` to `environment.systemPackages`

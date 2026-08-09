@@ -84,7 +84,7 @@ pub fn handover(
         .map_err(|_| "cannot inspect loaded Linux image")?;
     let (image_base, _) = loaded.info();
     drop(loaded);
-    log::info!(
+    log::debug!(
         "r-boot: Linux EFI image loaded at {:#x}",
         image_base as usize
     );
@@ -143,8 +143,8 @@ pub fn handover(
         .as_ptr()
         .cast::<c_void>();
 
-    log::info!("r-boot: Linux EFI 64-bit handover at {entry:#x}");
-    log::info!(
+    log::debug!("r-boot: Linux EFI 64-bit handover at {entry:#x}");
+    log::debug!(
         "r-boot: Linux handover args handle={:#x} table={:#x} params={:#x}",
         kernel_handle.as_ptr() as usize,
         system_table as usize,

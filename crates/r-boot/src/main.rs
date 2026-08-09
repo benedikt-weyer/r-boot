@@ -10,11 +10,13 @@ mod linux;
 mod menu;
 mod paging;
 mod protocol;
+mod spinner;
 
 use alloc::vec::Vec;
 use core::convert::Infallible;
 
 use protocol::BootProtocol;
+use spinner::Spinner;
 use uefi::boot::{self, AllocateType, LoadImageSource, MemoryType};
 use uefi::cstr16;
 use uefi::fs::{FileSystem, Path};
@@ -40,36 +42,57 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     let image = boot::image_handle();
     let fs = boot::get_image_file_system(image).map_err(|_| "cannot open boot volume")?;
     let mut fs = FileSystem::new(fs);
+    let mut spinner = Spinner::new(menu::configured_spinner_mode(&mut fs));
+    spinner.tick("Searching for boot entries...");
     let mut menu = menu::Menu::load(&mut fs);
+    spinner.clear();
+    spinner.set_mode(menu.spinner_mode());
     if !menu.entries.is_empty() {
-        let selected = menu.select()?;
+        let selected = menu.select(&mut fs)?;
+        spinner.set_mode(menu.spinner_mode());
         let entry = menu.entries.swap_remove(selected);
         return match entry.kind {
             menu::Kind::Linux => {
-                let kernel = fs
-                    .read(menu::path(&entry.kernel)?)
-                    .map_err(|_| "cannot read selected Linux kernel")?;
+                let kernel_path = menu::path(&entry.kernel)?;
+                let kernel = read_with_spinner(
+                    &mut fs,
+                    &kernel_path,
+                    &mut spinner,
+                    "cannot read selected Linux kernel",
+                )?;
                 let mut initramfs = Vec::new();
                 for path in entry.initrds {
-                    let bytes = fs
-                        .read(menu::path(&path)?)
-                        .map_err(|_| "cannot read selected initrd")?;
+                    let path = menu::path(&path)?;
+                    let bytes = read_with_spinner(
+                        &mut fs,
+                        &path,
+                        &mut spinner,
+                        "cannot read selected initrd",
+                    )?;
                     initramfs.extend_from_slice(&bytes);
                 }
                 drop(fs);
                 linux::handover(image, &kernel, &initramfs, entry.options.as_deref())
             }
             menu::Kind::Limine => {
-                let bytes = fs
-                    .read(menu::path(&entry.kernel)?)
-                    .map_err(|_| "cannot read selected Limine kernel")?;
+                let kernel_path = menu::path(&entry.kernel)?;
+                let bytes = read_with_spinner(
+                    &mut fs,
+                    &kernel_path,
+                    &mut spinner,
+                    "cannot read selected Limine kernel",
+                )?;
                 drop(fs);
                 boot_limine(&bytes)
             }
             menu::Kind::Efi => {
-                let bytes = fs
-                    .read(menu::path(&entry.kernel)?)
-                    .map_err(|_| "cannot read selected EFI image")?;
+                let image_path = menu::path(&entry.kernel)?;
+                let bytes = read_with_spinner(
+                    &mut fs,
+                    &image_path,
+                    &mut spinner,
+                    "cannot read selected EFI image",
+                )?;
                 drop(fs);
                 let child = boot::load_image(
                     image,
@@ -87,18 +110,48 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
 
     // Preserve the original single-image layout when no menu configuration is
     // present, so existing ESPs remain bootable.
-    if let Ok(kernel) = fs.read(Path::new(cstr16!("\\boot\\vmlinuz"))) {
-        let initramfs = fs
-            .read(Path::new(cstr16!("\\boot\\initramfs")))
-            .map_err(|_| "cannot read \\boot\\initramfs")?;
+    if let Ok(kernel) = read_with_spinner(
+        &mut fs,
+        Path::new(cstr16!("\\boot\\vmlinuz")),
+        &mut spinner,
+        "cannot read \\boot\\vmlinuz",
+    ) {
+        let initramfs = read_with_spinner(
+            &mut fs,
+            Path::new(cstr16!("\\boot\\initramfs")),
+            &mut spinner,
+            "cannot read \\boot\\initramfs",
+        )?;
         drop(fs);
         return linux::handover(image, &kernel, &initramfs, None);
     }
-    let bytes = fs
-        .read(Path::new(cstr16!("\\boot\\kernel.elf")))
-        .map_err(|_| "cannot read \\boot\\kernel.elf")?;
+    let bytes = read_with_spinner(
+        &mut fs,
+        Path::new(cstr16!("\\boot\\kernel.elf")),
+        &mut spinner,
+        "cannot read \\boot\\kernel.elf",
+    )?;
     drop(fs);
     boot_limine(&bytes)
+}
+
+/// Reads one boot payload while keeping the user informed of disk activity.
+///
+/// Firmware file reads are synchronous, so the frame is drawn immediately
+/// before each read. Successful reads leave the frame visible while the next
+/// boot stage is prepared; failures clear it before returning the error.
+fn read_with_spinner(
+    fs: &mut FileSystem,
+    path: &Path,
+    spinner: &mut Spinner,
+    error: &'static str,
+) -> Result<Vec<u8>, &'static str> {
+    spinner.tick("Loading boot payload...");
+    let bytes = fs.read(path).map_err(|_| error);
+    if bytes.is_err() {
+        spinner.clear();
+    }
+    bytes
 }
 
 fn boot_limine(bytes: &[u8]) -> Result<Infallible, &'static str> {
@@ -121,7 +174,7 @@ fn boot_limine(bytes: &[u8]) -> Result<Infallible, &'static str> {
     }
 
     let entry = image.entry;
-    log::info!("r-boot: entering Limine kernel at {entry:#x}");
+    log::debug!("r-boot: entering Limine kernel at {entry:#x}");
 
     // No Rust allocation or UEFI service may happen after this point.
     unsafe {

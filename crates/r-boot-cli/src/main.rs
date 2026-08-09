@@ -35,6 +35,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
         Command::Show => show(&config_path),
         Command::SetDefault(id) => set_default(&config_path, id),
         Command::SetTimeout(seconds) => set_timeout(&config_path, *seconds),
+        Command::SetSpinner(mode) => set_spinner(&config_path, mode),
     }
 }
 
@@ -44,13 +45,20 @@ fn show(config_path: &Path) -> Result<(), Box<dyn Error>> {
     println!("config:   {}", config_path.display());
     println!(
         "default:  {}",
-        config.default.as_deref().unwrap_or("(unset, boots first entry)")
+        config
+            .default
+            .as_deref()
+            .unwrap_or("(unset, boots first entry)")
     );
     match config.timeout {
         Some(0) => println!("timeout:  0 (boots default immediately)"),
         Some(seconds) => println!("timeout:  {seconds}s"),
         None => println!("timeout:  (unset, defaults to 5s)"),
     }
+    println!(
+        "spinner:  {}",
+        config.spinner.as_deref().unwrap_or("graphical")
+    );
     println!();
 
     if config.entries.is_empty() {
@@ -77,7 +85,11 @@ fn set_default(config_path: &Path, id: &str) -> Result<(), Box<dyn Error>> {
 
     if !config.entries.iter().any(|entry| entry.id == id) {
         let known: Vec<&str> = config.entries.iter().map(|e| e.id.as_str()).collect();
-        return Err(format!("no entry with id \"{id}\" (known ids: {})", known.join(", ")).into());
+        return Err(format!(
+            "no entry with id \"{id}\" (known ids: {})",
+            known.join(", ")
+        )
+        .into());
     }
 
     config.default = Some(id.to_string());
@@ -91,6 +103,14 @@ fn set_timeout(config_path: &Path, seconds: u32) -> Result<(), Box<dyn Error>> {
     config.timeout = Some(seconds);
     save(config_path, &config)?;
     println!("timeout set to {seconds}s");
+    Ok(())
+}
+
+fn set_spinner(config_path: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+    config.spinner = Some(mode.to_string());
+    save(config_path, &config)?;
+    println!("spinner set to {mode}");
     Ok(())
 }
 

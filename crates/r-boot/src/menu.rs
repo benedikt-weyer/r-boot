@@ -11,6 +11,7 @@ use uefi::proto::console::text::{Key, ScanCode};
 use uefi::{CString16, cstr16, system};
 
 use crate::bgrt;
+use crate::spinner::Mode as SpinnerMode;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -34,6 +35,7 @@ pub struct Menu {
     pub entries: Vec<Entry>,
     default: Option<String>,
     timeout: Option<u64>,
+    spinner_mode: SpinnerMode,
 }
 
 impl Menu {
@@ -42,6 +44,7 @@ impl Menu {
             entries: Vec::new(),
             default: None,
             timeout: None,
+            spinner_mode: SpinnerMode::Graphical,
         };
 
         if let Ok(contents) = fs.read_to_string(Path::new(cstr16!("\\boot\\r-boot.toml"))) {
@@ -56,7 +59,11 @@ impl Menu {
         menu
     }
 
-    pub fn select(&self) -> Result<usize, &'static str> {
+    pub fn spinner_mode(&self) -> SpinnerMode {
+        self.spinner_mode
+    }
+
+    pub fn select(&mut self, fs: &mut FileSystem) -> Result<usize, &'static str> {
         if self.entries.is_empty() {
             return Err("no boot entries found");
         }
@@ -121,8 +128,8 @@ impl Menu {
                     return Ok(selected);
                 }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
-                    if let Some(new_timeout) = self.edit_config(timeout, logo.as_ref())? {
-                        timeout = new_timeout;
+                    if self.edit_config(fs, logo.as_ref())? {
+                        timeout = self.timeout.unwrap_or(5);
                         if timeout > 0 {
                             boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
                                 .map_err(|_| "cannot restart boot-menu timeout")?;
@@ -135,16 +142,17 @@ impl Menu {
         }
     }
 
-    /// Lets the user adjust the boot-menu timeout for the current boot.
-    /// Returns the new timeout on save, or `None` if the edit was cancelled.
+    /// Lets the user persist boot-menu preferences to `boot/r-boot.toml`.
     fn edit_config(
-        &self,
-        current_timeout: u64,
+        &mut self,
+        fs: &mut FileSystem,
         logo: Option<&bgrt::Logo>,
-    ) -> Result<Option<u64>, &'static str> {
-        let mut value = current_timeout;
+    ) -> Result<bool, &'static str> {
+        let mut timeout = self.timeout.unwrap_or(5);
+        let mut spinner_mode = self.spinner_mode;
+        let mut selected = 0;
         loop {
-            self.draw_config(value, logo);
+            self.draw_config(timeout, spinner_mode, selected, logo);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -152,16 +160,37 @@ impl Menu {
             let key = system::with_stdin(|input| input.read_key())
                 .map_err(|_| "cannot read keyboard input")?;
             match key {
-                Some(Key::Special(ScanCode::UP)) => value = value.saturating_add(1),
-                Some(Key::Special(ScanCode::DOWN)) => value = value.saturating_sub(1),
-                Some(Key::Printable(character)) if character == '\r' => return Ok(Some(value)),
-                Some(Key::Special(ScanCode::ESCAPE)) => return Ok(None),
+                Some(Key::Special(ScanCode::UP)) => selected = selected.saturating_sub(1),
+                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 2,
+                Some(Key::Special(ScanCode::LEFT)) => match selected {
+                    0 => timeout = timeout.saturating_sub(1),
+                    1 => spinner_mode = spinner_mode.previous(),
+                    _ => unreachable!(),
+                },
+                Some(Key::Special(ScanCode::RIGHT)) => match selected {
+                    0 => timeout = timeout.saturating_add(1),
+                    1 => spinner_mode = spinner_mode.next(),
+                    _ => unreachable!(),
+                },
+                Some(Key::Printable(character)) if character == '\r' => {
+                    persist_settings(fs, timeout, spinner_mode)?;
+                    self.timeout = Some(timeout);
+                    self.spinner_mode = spinner_mode;
+                    return Ok(true);
+                }
+                Some(Key::Special(ScanCode::ESCAPE)) => return Ok(false),
                 _ => continue,
             }
         }
     }
 
-    fn draw_config(&self, timeout: u64, logo: Option<&bgrt::Logo>) {
+    fn draw_config(
+        &self,
+        timeout: u64,
+        spinner_mode: SpinnerMode,
+        selected: usize,
+        logo: Option<&bgrt::Logo>,
+    ) {
         system::with_stdout(|output| {
             let _ = output.clear();
         });
@@ -170,9 +199,13 @@ impl Menu {
         }
         uefi::println!("r-boot configuration");
         uefi::println!();
-        uefi::println!("Timeout: {timeout}s");
+        let timeout_marker = if selected == 0 { '>' } else { ' ' };
+        let spinner_marker = if selected == 1 { '>' } else { ' ' };
+        uefi::println!("{timeout_marker} Timeout: {timeout}s");
+        uefi::println!("{spinner_marker} Spinner: {}", spinner_mode.as_str());
         uefi::println!();
-        uefi::println!("Use Up/Down to adjust, Enter to save, Esc to cancel.");
+        uefi::println!("Use Up/Down to select, Left/Right to change.");
+        uefi::println!("Enter saves to boot/r-boot.toml. Esc cancels.");
     }
 
     fn default_index(&self) -> usize {
@@ -230,6 +263,11 @@ impl Menu {
                 match key {
                     "default" => self.default = Some(value.to_string()),
                     "timeout" => self.timeout = value.parse().ok(),
+                    "spinner" => {
+                        if let Some(mode) = SpinnerMode::parse(value) {
+                            self.spinner_mode = mode;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -371,6 +409,28 @@ impl Menu {
     }
 }
 
+/// Reads the spinner preference early, before full boot-entry discovery starts.
+/// Invalid or missing settings retain the graphical default.
+pub fn configured_spinner_mode(fs: &mut FileSystem) -> SpinnerMode {
+    let Ok(contents) = fs.read_to_string(Path::new(cstr16!("\\boot\\r-boot.toml"))) else {
+        return SpinnerMode::default();
+    };
+    for line in contents.lines() {
+        let line = strip_comment(line).trim();
+        if line == "[[entries]]" {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim() == "spinner" {
+                if let Some(mode) = SpinnerMode::parse(unquote(value.trim())) {
+                    return mode;
+                }
+            }
+        }
+    }
+    SpinnerMode::default()
+}
+
 /// Blits the firmware's boot logo (as located via [`bgrt::locate`]) onto the
 /// GOP framebuffer at the position the firmware itself drew it. Opened with
 /// `GetProtocol` rather than exclusively, so the text console driver keeps
@@ -489,6 +549,39 @@ fn shell_words(line: &str) -> Vec<String> {
         words.push(word);
     }
     words
+}
+
+/// Updates only r-boot's top-level settings, preserving generated entries and
+/// any comments in the existing configuration.
+fn persist_settings(
+    fs: &mut FileSystem,
+    timeout: u64,
+    spinner_mode: SpinnerMode,
+) -> Result<(), &'static str> {
+    let path = Path::new(cstr16!("\\boot\\r-boot.toml"));
+    let contents = fs.read_to_string(path).unwrap_or_default();
+    let mut updated = String::from("timeout = ");
+    updated.push_str(&timeout.to_string());
+    updated.push_str("\nspinner = \"");
+    updated.push_str(spinner_mode.as_str());
+    updated.push_str("\"\n");
+    let mut entries_started = false;
+
+    for line in contents.lines() {
+        let trimmed = strip_comment(line).trim();
+        if trimmed == "[[entries]]" {
+            entries_started = true;
+        }
+        let key = trimmed.split_once('=').map(|(key, _)| key.trim());
+        if !entries_started && matches!(key, Some("timeout" | "spinner")) {
+            continue;
+        }
+        updated.push_str(line);
+        updated.push('\n');
+    }
+
+    fs.write(path, updated.as_bytes())
+        .map_err(|_| "cannot save boot configuration")
 }
 
 pub fn path(value: &str) -> Result<PathBuf, &'static str> {

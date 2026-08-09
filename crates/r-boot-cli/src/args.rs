@@ -7,6 +7,8 @@ pub enum Command {
     SetDefault(String),
     /// Change the menu timeout, in seconds.
     SetTimeout(u32),
+    /// Change spinner output to off, text, or graphical.
+    SetSpinner(String),
 }
 
 pub struct Args {
@@ -23,7 +25,8 @@ impl Args {
              commands:\n  \
              show                    print the current r-boot configuration\n  \
              set-default <id>        change the default boot entry\n  \
-             set-timeout <seconds>   change the menu timeout"
+             set-timeout <seconds>   change the menu timeout\n  \
+             set-spinner <mode>      set spinner: off, text, or graphical"
         );
     }
 
@@ -35,7 +38,8 @@ impl Args {
             match arg.as_str() {
                 "-d" => {
                     esp = PathBuf::from(
-                        args.next().ok_or_else(|| "-d: missing argument".to_string())?,
+                        args.next()
+                            .ok_or_else(|| "-d: missing argument".to_string())?,
                     )
                 }
                 "show" => command = Some(Command::Show),
@@ -52,6 +56,15 @@ impl Args {
                         .parse::<u32>()
                         .map_err(|e| format!("set-timeout: {e}"))?;
                     command = Some(Command::SetTimeout(seconds));
+                }
+                "set-spinner" => {
+                    let mode = args
+                        .next()
+                        .ok_or_else(|| "set-spinner: missing <mode> argument".to_string())?;
+                    if !matches!(mode.as_str(), "off" | "text" | "graphical") {
+                        return Err("set-spinner: mode must be off, text, or graphical".to_string());
+                    }
+                    command = Some(Command::SetSpinner(mode));
                 }
                 other => return Err(format!("unrecognized argument: {other}")),
             }
