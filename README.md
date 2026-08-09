@@ -44,19 +44,21 @@ required for explicit 64-bit boot-parameter handoff.
 
 Use Up/Down and Enter to select an entry. The selected default boots after
 five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
-Press `c` to edit the timeout and spinner mode; saving writes these settings
-back to `boot/r-boot.toml`.
+Press `c` to edit the timeout, spinner mode, and firmware-logo visibility;
+saving writes these settings back to `boot/r-boot.toml`.
 When neither source contains entries, the original fixed
 `boot/vmlinuz` + `boot/initramfs` or `boot/kernel.elf` layouts remain supported.
 
 The native format deliberately uses a small TOML subset: quoted strings,
-integer `timeout`, `spinner = "off" | "text" | "graphical"`, and repeated
-`[[entries]]` tables. The spinner defaults to graphical rendering.
+integer `timeout`, `spinner = "off" | "text" | "graphical"`, `logo = true |
+false`, and repeated `[[entries]]` tables. The spinner defaults to graphical
+rendering and the firmware logo is shown by default.
 
 ```toml
 default = "alpine"
 timeout = 5
 spinner = "graphical"
+logo = true
 
 [[entries]]
 id = "alpine"
@@ -125,6 +127,7 @@ nix run github:benedikt-weyer/r-boot#r-boot-cli -- show
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-default nixos-generation-41
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-timeout 10
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-spinner text
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-logo off
 ```
 
 Add `r-boot.packages.x86_64-linux.r-boot-cli` to `environment.systemPackages`

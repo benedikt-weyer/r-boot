@@ -34,6 +34,7 @@ pub struct Menu {
     default: Option<String>,
     timeout: Option<u64>,
     spinner_mode: SpinnerMode,
+    logo_visible: bool,
 }
 
 impl Menu {
@@ -43,6 +44,7 @@ impl Menu {
             default: None,
             timeout: None,
             spinner_mode: SpinnerMode::Graphical,
+            logo_visible: true,
         };
 
         if let Ok(contents) = fs.read_to_string(Path::new(cstr16!("\\boot\\r-boot.toml"))) {
@@ -59,6 +61,10 @@ impl Menu {
 
     pub fn spinner_mode(&self) -> SpinnerMode {
         self.spinner_mode
+    }
+
+    pub fn logo_visible(&self) -> bool {
+        self.logo_visible
     }
 
     /// Removes the menu before boot progress is displayed.
@@ -150,9 +156,10 @@ impl Menu {
     fn edit_config(&mut self, fs: &mut FileSystem) -> Result<bool, &'static str> {
         let mut timeout = self.timeout.unwrap_or(5);
         let mut spinner_mode = self.spinner_mode;
+        let mut logo_visible = self.logo_visible;
         let mut selected = 0;
         loop {
-            self.draw_config(timeout, spinner_mode, selected);
+            self.draw_config(timeout, spinner_mode, logo_visible, selected);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -161,21 +168,24 @@ impl Menu {
                 .map_err(|_| "cannot read keyboard input")?;
             match key {
                 Some(Key::Special(ScanCode::UP)) => selected = selected.saturating_sub(1),
-                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 2,
+                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 3,
                 Some(Key::Special(ScanCode::LEFT)) => match selected {
                     0 => timeout = timeout.saturating_sub(1),
                     1 => spinner_mode = spinner_mode.previous(),
+                    2 => logo_visible = !logo_visible,
                     _ => unreachable!(),
                 },
                 Some(Key::Special(ScanCode::RIGHT)) => match selected {
                     0 => timeout = timeout.saturating_add(1),
                     1 => spinner_mode = spinner_mode.next(),
+                    2 => logo_visible = !logo_visible,
                     _ => unreachable!(),
                 },
                 Some(Key::Printable(character)) if character == '\r' => {
-                    persist_settings(fs, timeout, spinner_mode)?;
+                    persist_settings(fs, timeout, spinner_mode, logo_visible)?;
                     self.timeout = Some(timeout);
                     self.spinner_mode = spinner_mode;
+                    self.logo_visible = logo_visible;
                     return Ok(true);
                 }
                 Some(Key::Special(ScanCode::ESCAPE)) => return Ok(false),
@@ -184,14 +194,25 @@ impl Menu {
         }
     }
 
-    fn draw_config(&self, timeout: u64, spinner_mode: SpinnerMode, selected: usize) {
+    fn draw_config(
+        &self,
+        timeout: u64,
+        spinner_mode: SpinnerMode,
+        logo_visible: bool,
+        selected: usize,
+    ) {
         self.clear();
         uefi::println!("r-boot configuration");
         uefi::println!();
         let timeout_marker = if selected == 0 { '>' } else { ' ' };
         let spinner_marker = if selected == 1 { '>' } else { ' ' };
+        let logo_marker = if selected == 2 { '>' } else { ' ' };
         uefi::println!("{timeout_marker} Timeout: {timeout}s");
         uefi::println!("{spinner_marker} Spinner: {}", spinner_mode.as_str());
+        uefi::println!(
+            "{logo_marker} Firmware logo: {}",
+            if logo_visible { "on" } else { "off" }
+        );
         uefi::println!();
         uefi::println!("Use Up/Down to select, Left/Right to change.");
         uefi::println!("Enter saves to boot/r-boot.toml. Esc cancels.");
@@ -252,6 +273,7 @@ impl Menu {
                             self.spinner_mode = mode;
                         }
                     }
+                    "logo" => self.logo_visible = value.parse().unwrap_or(self.logo_visible),
                     _ => {}
                 }
             }
@@ -415,6 +437,25 @@ pub fn configured_spinner_mode(fs: &mut FileSystem) -> SpinnerMode {
     SpinnerMode::default()
 }
 
+/// Reads the firmware-logo preference early, before boot-entry discovery.
+pub fn configured_logo_visible(fs: &mut FileSystem) -> bool {
+    let Ok(contents) = fs.read_to_string(Path::new(cstr16!("\\boot\\r-boot.toml"))) else {
+        return true;
+    };
+    for line in contents.lines() {
+        let line = strip_comment(line).trim();
+        if line == "[[entries]]" {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim() == "logo" {
+                return value.trim().parse().unwrap_or(true);
+            }
+        }
+    }
+    true
+}
+
 #[derive(Default)]
 struct RawEntry {
     id: Option<String>,
@@ -506,6 +547,7 @@ fn persist_settings(
     fs: &mut FileSystem,
     timeout: u64,
     spinner_mode: SpinnerMode,
+    logo_visible: bool,
 ) -> Result<(), &'static str> {
     let path = Path::new(cstr16!("\\boot\\r-boot.toml"));
     let contents = fs.read_to_string(path).unwrap_or_default();
@@ -513,7 +555,8 @@ fn persist_settings(
     updated.push_str(&timeout.to_string());
     updated.push_str("\nspinner = \"");
     updated.push_str(spinner_mode.as_str());
-    updated.push_str("\"\n");
+    updated.push_str("\"\nlogo = ");
+    updated.push_str(if logo_visible { "true\n" } else { "false\n" });
     let mut entries_started = false;
 
     for line in contents.lines() {
@@ -522,7 +565,7 @@ fn persist_settings(
             entries_started = true;
         }
         let key = trimmed.split_once('=').map(|(key, _)| key.trim());
-        if !entries_started && matches!(key, Some("timeout" | "spinner")) {
+        if !entries_started && matches!(key, Some("timeout" | "spinner" | "logo")) {
             continue;
         }
         updated.push_str(line);

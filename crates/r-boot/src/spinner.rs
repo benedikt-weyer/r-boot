@@ -85,13 +85,13 @@ pub struct Spinner {
 }
 
 impl Spinner {
-    pub fn new(mode: Mode) -> Self {
+    pub fn new(mode: Mode, show_logo: bool) -> Self {
         Self {
             mode,
             index: 0,
             buffer: vec![BACKGROUND; SIZE * SIZE],
             last_position: None,
-            logo: bgrt::locate(),
+            logo: show_logo.then(bgrt::locate).flatten(),
         }
     }
 
@@ -99,6 +99,10 @@ impl Spinner {
         self.mode = mode;
         self.index = 0;
         self.last_position = None;
+    }
+
+    pub fn set_logo_visible(&mut self, visible: bool) {
+        self.logo = visible.then(bgrt::locate).flatten();
     }
 
     /// Advances one frame using the configured output mode.

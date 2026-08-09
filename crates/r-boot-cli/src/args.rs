@@ -9,6 +9,8 @@ pub enum Command {
     SetTimeout(u32),
     /// Change spinner output to off, text, or graphical.
     SetSpinner(String),
+    /// Show or hide the firmware logo while using the graphical spinner.
+    SetLogo(bool),
 }
 
 pub struct Args {
@@ -26,7 +28,8 @@ impl Args {
              show                    print the current r-boot configuration\n  \
              set-default <id>        change the default boot entry\n  \
              set-timeout <seconds>   change the menu timeout\n  \
-             set-spinner <mode>      set spinner: off, text, or graphical"
+             set-spinner <mode>      set spinner: off, text, or graphical\n  \
+             set-logo <on|off>       show or hide the firmware logo"
         );
     }
 
@@ -65,6 +68,18 @@ impl Args {
                         return Err("set-spinner: mode must be off, text, or graphical".to_string());
                     }
                     command = Some(Command::SetSpinner(mode));
+                }
+                "set-logo" => {
+                    let visible = match args
+                        .next()
+                        .ok_or_else(|| "set-logo: missing <on|off>".to_string())?
+                        .as_str()
+                    {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err("set-logo: value must be on or off".to_string()),
+                    };
+                    command = Some(Command::SetLogo(visible));
                 }
                 other => return Err(format!("unrecognized argument: {other}")),
             }

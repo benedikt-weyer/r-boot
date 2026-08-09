@@ -46,15 +46,20 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     let image = boot::image_handle();
     let fs = boot::get_image_file_system(image).map_err(|_| "cannot open boot volume")?;
     let mut fs = FileSystem::new(fs);
-    let mut spinner = Spinner::new(menu::configured_spinner_mode(&mut fs));
+    let mut spinner = Spinner::new(
+        menu::configured_spinner_mode(&mut fs),
+        menu::configured_logo_visible(&mut fs),
+    );
     spinner.tick("Searching for boot entries...");
     let mut menu = menu::Menu::load(&mut fs);
     spinner.clear();
     spinner.set_mode(menu.spinner_mode());
+    spinner.set_logo_visible(menu.logo_visible());
     if !menu.entries.is_empty() {
         let selected = menu.select(&mut fs)?;
         menu.clear();
         spinner.set_mode(menu.spinner_mode());
+        spinner.set_logo_visible(menu.logo_visible());
         let entry = menu.entries.swap_remove(selected);
         uefi::println!("Booting {}...", entry.title);
         return match entry.kind {

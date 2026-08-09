@@ -21,6 +21,7 @@ pub struct Config {
     pub default: Option<String>,
     pub timeout: Option<u32>,
     pub spinner: Option<String>,
+    pub logo: Option<bool>,
     pub entries: Vec<Entry>,
 }
 
@@ -61,6 +62,7 @@ impl Config {
                     "default" => config.default = Some(value.to_string()),
                     "timeout" => config.timeout = value.parse().ok(),
                     "spinner" => config.spinner = Some(value.to_string()),
+                    "logo" => config.logo = value.parse().ok(),
                     _ => {}
                 },
             }
@@ -82,6 +84,9 @@ impl Config {
         }
         if let Some(spinner) = &self.spinner {
             let _ = writeln!(out, "spinner = \"{spinner}\"");
+        }
+        if let Some(logo) = self.logo {
+            let _ = writeln!(out, "logo = {logo}");
         }
         for entry in &self.entries {
             out.push('\n');
@@ -132,6 +137,7 @@ mod tests {
 default = \"nixos-default\"
 timeout = 5
 spinner = \"graphical\"
+logo = true
 
 [[entries]]
 id = \"nixos-default\"
@@ -145,6 +151,7 @@ options = \"init=/nix/store/foo/init\"
         assert_eq!(config.default.as_deref(), Some("nixos-default"));
         assert_eq!(config.timeout, Some(5));
         assert_eq!(config.spinner.as_deref(), Some("graphical"));
+        assert_eq!(config.logo, Some(true));
         assert_eq!(config.entries.len(), 1);
         assert_eq!(config.entries[0].id, "nixos-default");
         assert_eq!(
@@ -156,6 +163,7 @@ options = \"init=/nix/store/foo/init\"
         assert_eq!(reparsed.default, config.default);
         assert_eq!(reparsed.timeout, config.timeout);
         assert_eq!(reparsed.spinner, config.spinner);
+        assert_eq!(reparsed.logo, config.logo);
         assert_eq!(reparsed.entries.len(), config.entries.len());
     }
 }

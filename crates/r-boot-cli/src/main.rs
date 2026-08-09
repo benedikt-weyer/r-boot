@@ -36,6 +36,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
         Command::SetDefault(id) => set_default(&config_path, id),
         Command::SetTimeout(seconds) => set_timeout(&config_path, *seconds),
         Command::SetSpinner(mode) => set_spinner(&config_path, mode),
+        Command::SetLogo(visible) => set_logo(&config_path, *visible),
     }
 }
 
@@ -58,6 +59,14 @@ fn show(config_path: &Path) -> Result<(), Box<dyn Error>> {
     println!(
         "spinner:  {}",
         config.spinner.as_deref().unwrap_or("graphical")
+    );
+    println!(
+        "logo:     {}",
+        if config.logo.unwrap_or(true) {
+            "on"
+        } else {
+            "off"
+        }
     );
     println!();
 
@@ -111,6 +120,17 @@ fn set_spinner(config_path: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
     config.spinner = Some(mode.to_string());
     save(config_path, &config)?;
     println!("spinner set to {mode}");
+    Ok(())
+}
+
+fn set_logo(config_path: &Path, visible: bool) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+    config.logo = Some(visible);
+    save(config_path, &config)?;
+    println!(
+        "firmware logo {}",
+        if visible { "enabled" } else { "disabled" }
+    );
     Ok(())
 }
 
