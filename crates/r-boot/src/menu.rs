@@ -67,11 +67,12 @@ impl Menu {
             boot::create_event(EventType::TIMER, Tpl::APPLICATION, None, None)
                 .map_err(|_| "cannot create boot-menu timer")?
         };
-        boot::set_timer(&timer, TimerTrigger::Relative(Duration::from_secs(timeout)))
+        boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
             .map_err(|_| "cannot set boot-menu timeout")?;
 
+        let mut remaining = timeout;
         loop {
-            self.draw(selected, timeout);
+            self.draw(selected, remaining);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             // `wait_for_event` takes owned handles although it does not close
@@ -80,8 +81,12 @@ impl Menu {
             let index =
                 boot::wait_for_event(&mut events).map_err(|_| "cannot wait for keyboard input")?;
             if index == 1 {
-                let _ = boot::close_event(timer);
-                return Ok(selected);
+                remaining -= 1;
+                if remaining == 0 {
+                    let _ = boot::close_event(timer);
+                    return Ok(selected);
+                }
+                continue;
             }
             let key = system::with_stdin(|input| input.read_key())
                 .map_err(|_| "cannot read keyboard input")?;
@@ -98,8 +103,7 @@ impl Menu {
                 }
                 _ => continue,
             }
-            boot::set_timer(&timer, TimerTrigger::Relative(Duration::from_secs(timeout)))
-                .map_err(|_| "cannot reset boot-menu timeout")?;
+            remaining = timeout;
         }
     }
 
