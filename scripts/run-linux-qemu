@@ -16,6 +16,26 @@ curl --fail --location --output "$build/initramfs" "$mirror/initramfs-virt"
 cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
 cp "$build/vmlinuz" "$build/esp/boot/vmlinuz"
 cp "$build/initramfs" "$build/esp/boot/initramfs"
+cat >"$build/r-boot.toml" <<'EOF'
+default = "alpine"
+timeout = 5
+
+[[entries]]
+id = "alpine"
+title = "Alpine Linux"
+kind = "linux"
+linux = "/boot/vmlinuz"
+initrd = "/boot/initramfs"
+options = "console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+
+[[entries]]
+id = "alpine-debug"
+title = "Alpine Linux (debug)"
+kind = "linux"
+linux = "/boot/vmlinuz"
+initrd = "/boot/initramfs"
+options = "console=ttyS0 loglevel=7 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt"
+EOF
 
 truncate -s 64M "$build/esp.img"
 mkfs.fat -F 32 "$build/esp.img" >/dev/null
@@ -23,6 +43,7 @@ mmd -i "$build/esp.img" ::EFI ::EFI/BOOT ::boot
 mcopy -i "$build/esp.img" "$build/esp/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
 mcopy -i "$build/esp.img" "$build/esp/boot/vmlinuz" ::boot/vmlinuz
 mcopy -i "$build/esp.img" "$build/esp/boot/initramfs" ::boot/initramfs
+mcopy -i "$build/esp.img" "$build/r-boot.toml" ::boot/r-boot.toml
 
 if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
   printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
