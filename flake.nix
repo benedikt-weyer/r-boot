@@ -32,7 +32,13 @@
 
             boot.loader.r-boot.enable = true;
             boot.loader.timeout = 5;
-            boot.kernelParams = [ "console=ttyS0" ];
+            # `nomodeset`: without it, the `bochs` KMS driver takes over the
+            # console from the EFI framebuffer mid-boot with a real mode-set
+            # against QEMU's "std" VGA device, and some QEMU GTK/SDL builds
+            # fail to repaint their window after that handover (the pixel
+            # data itself is fine; only the GTK/SDL widget stops updating).
+            # Staying on the EFI framebuffer for the whole boot avoids it.
+            boot.kernelParams = [ "console=tty0" "console=ttyS0" "nomodeset" ];
 
             # Lets the smoke test (and anyone booting the image) inspect and
             # tweak the running system's r-boot menu with `r-boot-cli`.

@@ -9,6 +9,7 @@ use core::ffi::c_void;
 
 use uefi::Handle;
 use uefi::boot::{self, AllocateType, LoadImageSource, MemoryType};
+use uefi::proto::console::gop::{GraphicsOutput, PixelFormat};
 use uefi::proto::loaded_image::LoadedImage;
 use uefi::table;
 
@@ -30,6 +31,35 @@ const CMD_LINE_PTR: usize = 0x228;
 const CMDLINE_SIZE: usize = 0x238;
 const XLOADFLAGS: usize = 0x236;
 const HANDOVER_OFFSET: usize = 0x264;
+
+// `struct screen_info` (linux/screen_info.h), at offset 0 of boot_params.
+// The kernel's own EFI stub fills this in from the GOP when it owns the
+// UEFI handover; since r-boot jumps straight to the internal 64-bit
+// handover entry (skipping that stub code), r-boot has to do it instead, or
+// the kernel never initializes an efifb console and nothing after
+// ExitBootServices reaches the display.
+const ORIG_VIDEO_ISVGA: usize = 0x0f;
+const LFB_WIDTH: usize = 0x12;
+const LFB_HEIGHT: usize = 0x14;
+const LFB_DEPTH: usize = 0x16;
+const LFB_BASE: usize = 0x18;
+const LFB_SIZE: usize = 0x1c;
+const LFB_LINELENGTH: usize = 0x24;
+const RED_SIZE: usize = 0x26;
+const RED_POS: usize = 0x27;
+const GREEN_SIZE: usize = 0x28;
+const GREEN_POS: usize = 0x29;
+const BLUE_SIZE: usize = 0x2a;
+const BLUE_POS: usize = 0x2b;
+const RSVD_SIZE: usize = 0x2c;
+const RSVD_POS: usize = 0x2d;
+const PAGES: usize = 0x32;
+const CAPABILITIES: usize = 0x36;
+const EXT_LFB_BASE: usize = 0x3a;
+
+const VIDEO_TYPE_EFI: u8 = 0x70;
+const VIDEO_CAPABILITY_SKIP_QUIRKS: u32 = 1 << 0;
+const VIDEO_CAPABILITY_64BIT_BASE: u32 = 1 << 1;
 
 pub fn handover(
     parent: Handle,
@@ -101,6 +131,7 @@ pub fn handover(
             command_line_options.len() as u32 + 1,
         );
     }
+    setup_screen_info(params.as_ptr());
 
     let entry = (image_base as usize)
         .checked_add(header.setup_bytes)
@@ -167,6 +198,86 @@ impl Header {
     }
 }
 
+/// Fills in `boot_params.screen_info` from the UEFI GOP, mirroring what the
+/// kernel's own EFI stub does in `efi_setup_gop()`. Without this, the kernel
+/// has no framebuffer to hand to `efifb`, and the display stays blank for
+/// the whole Linux boot (kernel messages, initrd, ...) even though r-boot's
+/// own menu was drawn to the same screen moments earlier.
+fn setup_screen_info(params: *mut u8) {
+    let Ok(handle) = boot::get_handle_for_protocol::<GraphicsOutput>() else {
+        log::warn!("r-boot: no UEFI Graphics Output Protocol; Linux console will be text-only");
+        return;
+    };
+    let Ok(mut gop) = boot::open_protocol_exclusive::<GraphicsOutput>(handle) else {
+        log::warn!("r-boot: cannot open Graphics Output Protocol");
+        return;
+    };
+
+    let info = gop.current_mode_info();
+    let pixel_format = info.pixel_format();
+    if pixel_format == PixelFormat::BltOnly {
+        log::warn!("r-boot: GOP framebuffer is not memory-mapped; Linux console will be text-only");
+        return;
+    }
+    let (width, height) = info.resolution();
+    let pixels_per_scan_line = info.stride();
+    let base = gop.frame_buffer().as_mut_ptr() as usize;
+
+    let (red_pos, red_size, green_pos, green_size, blue_pos, blue_size, rsvd_pos, rsvd_size) =
+        match pixel_format {
+            PixelFormat::Rgb => (0u8, 8u8, 8u8, 8u8, 16u8, 8u8, 24u8, 8u8),
+            PixelFormat::Bgr => (16u8, 8u8, 8u8, 8u8, 0u8, 8u8, 24u8, 8u8),
+            PixelFormat::Bitmask => {
+                let mask = info.pixel_bitmask().unwrap_or_default();
+                let (rp, rs) = find_bits(mask.red);
+                let (gp, gs) = find_bits(mask.green);
+                let (bp, bs) = find_bits(mask.blue);
+                let (xp, xs) = find_bits(mask.reserved);
+                (rp, rs, gp, gs, bp, bs, xp, xs)
+            }
+            PixelFormat::BltOnly => unreachable!("returned above"),
+        };
+    let lfb_depth = red_size as u16 + green_size as u16 + blue_size as u16 + rsvd_size as u16;
+    let lfb_linelength = (pixels_per_scan_line as u32 * lfb_depth as u32) / 8;
+    let lfb_size = lfb_linelength * height as u32;
+
+    unsafe {
+        write_u8(params, ORIG_VIDEO_ISVGA, VIDEO_TYPE_EFI);
+        write_u16(params, LFB_WIDTH, width as u16);
+        write_u16(params, LFB_HEIGHT, height as u16);
+        write_u16(params, LFB_DEPTH, lfb_depth);
+        write_u32(params, LFB_BASE, base as u32);
+        write_u32(params, LFB_SIZE, lfb_size);
+        write_u16(params, LFB_LINELENGTH, lfb_linelength as u16);
+        write_u8(params, RED_SIZE, red_size);
+        write_u8(params, RED_POS, red_pos);
+        write_u8(params, GREEN_SIZE, green_size);
+        write_u8(params, GREEN_POS, green_pos);
+        write_u8(params, BLUE_SIZE, blue_size);
+        write_u8(params, BLUE_POS, blue_pos);
+        write_u8(params, RSVD_SIZE, rsvd_size);
+        write_u8(params, RSVD_POS, rsvd_pos);
+        write_u16(params, PAGES, 1);
+        let mut capabilities = VIDEO_CAPABILITY_SKIP_QUIRKS;
+        let ext_base = base >> 32;
+        if ext_base != 0 {
+            capabilities |= VIDEO_CAPABILITY_64BIT_BASE;
+            write_u32(params, EXT_LFB_BASE, ext_base as u32);
+        }
+        write_u32(params, CAPABILITIES, capabilities);
+    }
+}
+
+/// UEFI guarantees the set bits of a GOP pixel bitmask are contiguous.
+fn find_bits(mask: u32) -> (u8, u8) {
+    if mask == 0 {
+        return (0, 0);
+    }
+    let pos = mask.trailing_zeros() as u8;
+    let size = (32 - mask.leading_zeros() as u8) - pos;
+    (pos, size)
+}
+
 fn allocate_and_zero(size: usize) -> Result<core::ptr::NonNull<u8>, &'static str> {
     let pages = size
         .checked_add(PAGE_SIZE - 1)
@@ -204,6 +315,10 @@ fn allocate_command_line(options: &str) -> Result<core::ptr::NonNull<u8>, &'stat
 
 unsafe fn write_u8(base: *mut u8, offset: usize, value: u8) {
     unsafe { base.add(offset).write(value) };
+}
+
+unsafe fn write_u16(base: *mut u8, offset: usize, value: u16) {
+    unsafe { (base.add(offset) as *mut u16).write_unaligned(value.to_le()) };
 }
 
 unsafe fn write_u32(base: *mut u8, offset: usize, value: u32) {
