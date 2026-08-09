@@ -18,7 +18,7 @@ const MIN_PROTOCOL_VERSION: u16 = 0x020b;
 const XLF_EFI_HANDOVER_64: u16 = 1 << 3;
 const BOOT_PARAMS_SIZE: usize = 4096;
 const PAGE_SIZE: usize = 4096;
-const CMDLINE: &[u8] = b"console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt\0";
+const DEFAULT_CMDLINE: &str = "console=ttyS0 modules=loop,squashfs ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-virt";
 
 // Offsets are from the start of the bzImage, and are therefore also offsets
 // into the boot_params zero page after copying the setup header there.
@@ -35,6 +35,7 @@ pub fn handover(
     parent: Handle,
     kernel: &[u8],
     initramfs: &[u8],
+    options: Option<&str>,
 ) -> Result<Infallible, &'static str> {
     let header = Header::parse(kernel)?;
 
@@ -59,8 +60,13 @@ pub fn handover(
     );
 
     let params = allocate_and_zero(BOOT_PARAMS_SIZE)?;
-    let initrd = allocate_copy(initramfs)?;
-    let command_line = allocate_copy(CMDLINE)?;
+    let initrd = if initramfs.is_empty() {
+        None
+    } else {
+        Some(allocate_copy(initramfs)?)
+    };
+    let command_line_options = options.unwrap_or(DEFAULT_CMDLINE);
+    let command_line = allocate_command_line(command_line_options)?;
     unsafe {
         // The setup header is part of struct boot_params at the same offset.
         core::ptr::copy_nonoverlapping(
@@ -76,18 +82,24 @@ pub fn handover(
                 .checked_add(header.setup_bytes)
                 .ok_or("Linux image address overflow")? as u32,
         );
-        write_u32(
-            params.as_ptr(),
-            RAMDISK_IMAGE,
-            initrd.as_ptr() as usize as u32,
-        );
+        if let Some(initrd) = initrd {
+            write_u32(
+                params.as_ptr(),
+                RAMDISK_IMAGE,
+                initrd.as_ptr() as usize as u32,
+            );
+        }
         write_u32(params.as_ptr(), RAMDISK_SIZE, initramfs.len() as u32);
         write_u32(
             params.as_ptr(),
             CMD_LINE_PTR,
             command_line.as_ptr() as usize as u32,
         );
-        write_u32(params.as_ptr(), CMDLINE_SIZE, CMDLINE.len() as u32);
+        write_u32(
+            params.as_ptr(),
+            CMDLINE_SIZE,
+            command_line_options.len() as u32 + 1,
+        );
     }
 
     let entry = (image_base as usize)
@@ -171,6 +183,21 @@ fn allocate_copy(bytes: &[u8]) -> Result<core::ptr::NonNull<u8>, &'static str> {
         return Err("Linux file is too large");
     }
     let allocation = allocate_and_zero(bytes.len())?;
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.as_ptr(), bytes.len()) };
+    Ok(allocation)
+}
+
+fn allocate_command_line(options: &str) -> Result<core::ptr::NonNull<u8>, &'static str> {
+    let bytes = options.as_bytes();
+    if bytes.contains(&0) {
+        return Err("Linux command line contains NUL");
+    }
+    let allocation = allocate_and_zero(
+        bytes
+            .len()
+            .checked_add(1)
+            .ok_or("Linux command line is too large")?,
+    )?;
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.as_ptr(), bytes.len()) };
     Ok(allocation)
 }

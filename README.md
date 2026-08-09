@@ -31,6 +31,45 @@ The handover protocol is deprecated upstream in favor of executing the Linux
 EFI PE entry point directly, but it is implemented here as requested and
 required for explicit 64-bit boot-parameter handoff.
 
+## Boot menu
+
+`r-boot` combines entries from both of these sources on the ESP:
+
+- `boot/r-boot.toml`, its native TOML configuration.
+- `loader/entries/*.conf`, systemd-boot's Boot Loader Specification Type #1
+  entry format. `loader/loader.conf` supplies its `default` and `timeout`
+  settings when the TOML file has not set them.
+
+Use Up/Down and Enter to select an entry. The selected default boots after
+five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
+When neither source contains entries, the original fixed
+`boot/vmlinuz` + `boot/initramfs` or `boot/kernel.elf` layouts remain supported.
+
+The native format deliberately uses a small TOML subset: quoted strings,
+integer `timeout`, and repeated `[[entries]]` tables.
+
+```toml
+default = "alpine"
+timeout = 5
+
+[[entries]]
+id = "alpine"
+title = "Alpine Linux"
+kind = "linux"
+linux = "/boot/vmlinuz-virt"
+initrd = "/boot/initramfs-virt"
+options = "console=ttyS0 quiet"
+
+[[entries]]
+title = "My Limine kernel"
+kind = "limine"
+kernel = "/boot/kernel.elf"
+```
+
+For systemd-boot compatibility, `title`, `linux`, repeated `initrd`, `options`,
+and `efi` are accepted. `efi` entries are started directly as UEFI images;
+Linux entries use r-boot's EFI handover implementation.
+
 ## References
 
 Authoritative Limine, Linux boot-protocol, UEFI, EFI API, and Rust UEFI links

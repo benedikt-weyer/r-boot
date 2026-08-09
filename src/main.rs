@@ -6,6 +6,7 @@ extern crate alloc;
 mod elf;
 mod limine;
 mod linux;
+mod menu;
 mod paging;
 mod protocol;
 
@@ -13,7 +14,7 @@ use alloc::vec::Vec;
 use core::convert::Infallible;
 
 use protocol::BootProtocol;
-use uefi::boot::{self, AllocateType, MemoryType};
+use uefi::boot::{self, AllocateType, LoadImageSource, MemoryType};
 use uefi::cstr16;
 use uefi::fs::{FileSystem, Path};
 use uefi::prelude::*;
@@ -38,18 +39,68 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     let image = boot::image_handle();
     let fs = boot::get_image_file_system(image).map_err(|_| "cannot open boot volume")?;
     let mut fs = FileSystem::new(fs);
+    let mut menu = menu::Menu::load(&mut fs);
+    if !menu.entries.is_empty() {
+        let selected = menu.select()?;
+        let entry = menu.entries.swap_remove(selected);
+        return match entry.kind {
+            menu::Kind::Linux => {
+                let kernel = fs
+                    .read(menu::path(&entry.kernel)?)
+                    .map_err(|_| "cannot read selected Linux kernel")?;
+                let mut initramfs = Vec::new();
+                for path in entry.initrds {
+                    let bytes = fs
+                        .read(menu::path(&path)?)
+                        .map_err(|_| "cannot read selected initrd")?;
+                    initramfs.extend_from_slice(&bytes);
+                }
+                drop(fs);
+                linux::handover(image, &kernel, &initramfs, entry.options.as_deref())
+            }
+            menu::Kind::Limine => {
+                let bytes = fs
+                    .read(menu::path(&entry.kernel)?)
+                    .map_err(|_| "cannot read selected Limine kernel")?;
+                drop(fs);
+                boot_limine(&bytes)
+            }
+            menu::Kind::Efi => {
+                let bytes = fs
+                    .read(menu::path(&entry.kernel)?)
+                    .map_err(|_| "cannot read selected EFI image")?;
+                drop(fs);
+                let child = boot::load_image(
+                    image,
+                    LoadImageSource::FromBuffer {
+                        buffer: &bytes,
+                        file_path: None,
+                    },
+                )
+                .map_err(|_| "firmware rejected selected EFI image")?;
+                boot::start_image(child).map_err(|_| "selected EFI image returned an error")?;
+                Err("selected EFI image returned")
+            }
+        };
+    }
+
+    // Preserve the original single-image layout when no menu configuration is
+    // present, so existing ESPs remain bootable.
     if let Ok(kernel) = fs.read(Path::new(cstr16!("\\boot\\vmlinuz"))) {
         let initramfs = fs
             .read(Path::new(cstr16!("\\boot\\initramfs")))
             .map_err(|_| "cannot read \\boot\\initramfs")?;
         drop(fs);
-        return linux::handover(image, &kernel, &initramfs);
+        return linux::handover(image, &kernel, &initramfs, None);
     }
     let bytes = fs
         .read(Path::new(cstr16!("\\boot\\kernel.elf")))
         .map_err(|_| "cannot read \\boot\\kernel.elf")?;
     drop(fs);
+    boot_limine(&bytes)
+}
 
+fn boot_limine(bytes: &[u8]) -> Result<Infallible, &'static str> {
     let image = elf::Image::parse(&bytes)?;
     let loaded = load_segments(&bytes, &image)?;
     limine::Limine.prepare(&bytes, &image, &loaded, HHDM_OFFSET)?;
