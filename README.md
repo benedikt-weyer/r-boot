@@ -110,6 +110,17 @@ their kernels/initrds into `boot/nixos` on the ESP, and installs the r-boot
 binary to `EFI/BOOT/BOOTX64.EFI`. With `boot.loader.efi.canTouchEfiVariables`
 it also registers a `r-boot` NVRAM boot entry via `efibootmgr`.
 
+`flake.nix` also defines `nixosConfigurations.r-boot-qemu`, a minimal NixOS
+system with `boot.loader.r-boot` enabled, and a `nixos-image` package that
+turns it into a qcow2 disk image via nixpkgs' `make-disk-image.nix`. Build
+and boot it to exercise r-boot as a real installed bootloader, rather than
+the fixed kernel/initrd layouts used by `run-linux-qemu`/`run-nixos-qemu`:
+
+```sh
+./scripts/build-nixos-image
+./scripts/run-nixos-image-qemu
+```
+
 ## References
 
 Authoritative Limine, Linux boot-protocol, UEFI, EFI API, and Rust UEFI links

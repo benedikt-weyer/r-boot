@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build a minimal NixOS disk image (flake output `nixos-image`, defined in
+# flake.nix as `nixosConfigurations.r-boot-qemu`) that installs r-boot as its
+# bootloader via `boot.loader.r-boot`, for exercising the NixOS module
+# end to end. Run scripts/run-nixos-image-qemu afterwards to boot it.
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+build="$root/target/r-boot-nixos-image"
+
+mkdir -p "$build"
+nix build "$root#nixos-image" --out-link "$build/result" --print-build-logs
+
+image="$(find -L "$build/result" -maxdepth 1 -name '*.qcow2')"
+if [[ -z "$image" ]]; then
+  printf 'nixos-image build did not produce a .qcow2 file in %s\n' "$build/result" >&2
+  exit 1
+fi
+
+# Copy out of the read-only /nix/store result so QEMU can write to it.
+cp --no-preserve=mode "$image" "$build/nixos.qcow2"
+printf 'Built %s\n' "$build/nixos.qcow2"

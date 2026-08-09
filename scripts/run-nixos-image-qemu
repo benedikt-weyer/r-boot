@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Boot the disk image produced by scripts/build-nixos-image under OVMF, to
+# verify r-boot brings up a full NixOS system as its installed bootloader
+# (not just the standalone kernel/initrd smoke tests in run-linux-qemu /
+# run-nixos-qemu).
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+build="$root/target/r-boot-nixos-image"
+image="$build/nixos.qcow2"
+
+if [[ ! -f "$image" ]]; then
+  printf 'No %s found; run scripts/build-nixos-image first.\n' "$image" >&2
+  exit 1
+fi
+
+if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
+  printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
+  exit 2
+fi
+
+accel_args=()
+if [[ -w /dev/kvm ]]; then
+  accel_args=(-enable-kvm -cpu host)
+else
+  accel_args=(-cpu qemu64)
+fi
+
+# -nodefaults + explicit -netdev/-device/-vga: the q35 machine type auto-attaches
+# an empty CD-ROM drive unless told otherwise, which is pointless here.
+qemu-system-x86_64 \
+  -machine q35 -m 2G "${accel_args[@]}" \
+  -nodefaults \
+  -vga std \
+  -netdev user,id=net0 -device e1000e,netdev=net0 \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive if=virtio,format=qcow2,file="$image" \
+  -object rng-random,filename=/dev/urandom,id=rng0 \
+  -device virtio-rng-pci,rng=rng0 \
+  -serial stdio \
+  -no-reboot
