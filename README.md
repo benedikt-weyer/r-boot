@@ -39,6 +39,8 @@ required for explicit 64-bit boot-parameter handoff.
 - `loader/entries/*.conf`, systemd-boot's Boot Loader Specification Type #1
   entry format. `loader/loader.conf` supplies its `default` and `timeout`
   settings when the TOML file has not set them.
+- `boot/grub/grub.cfg` and `grub/grub.cfg`, using GRUB's static Linux
+  `menuentry` format.
 
 Use Up/Down and Enter to select an entry. The selected default boots after
 five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
@@ -69,6 +71,11 @@ kernel = "/boot/kernel.elf"
 For systemd-boot compatibility, `title`, `linux`, repeated `initrd`, `options`,
 and `efi` are accepted. `efi` entries are started directly as UEFI images;
 Linux entries use r-boot's EFI handover implementation.
+
+GRUB entries support `menuentry`, `--id=`, `linux`/`linuxefi`, and
+`initrd`/`initrdefi`; top-level `set default=` and `set timeout=` are also
+read. GRUB scripts with variable expansion, conditionals, generated
+submenus, chainloading, or non-Linux commands are intentionally ignored.
 
 ## References
 

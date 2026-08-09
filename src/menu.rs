@@ -48,6 +48,8 @@ impl Menu {
             menu.parse_loader_config(&contents);
         }
         menu.load_systemd_entries(fs);
+        menu.load_grub_config(fs, Path::new(cstr16!("\\boot\\grub\\grub.cfg")));
+        menu.load_grub_config(fs, Path::new(cstr16!("\\grub\\grub.cfg")));
         menu
     }
 
@@ -207,6 +209,60 @@ impl Menu {
         }
     }
 
+    fn load_grub_config(&mut self, fs: &mut FileSystem, path: &Path) {
+        let Ok(contents) = fs.read_to_string(path) else {
+            return;
+        };
+        let mut entry = None;
+        for line in contents.lines() {
+            let line = strip_comment(line).trim();
+            if let Some(menuentry) = line.strip_prefix("menuentry") {
+                self.push_entry(entry.take());
+                entry = parse_grub_menuentry(menuentry);
+                continue;
+            }
+            if entry.is_none() {
+                self.parse_grub_setting(line);
+                continue;
+            }
+            let words = shell_words(line);
+            let Some((command, arguments)) = words.split_first() else {
+                continue;
+            };
+            if command == "}" {
+                self.push_entry(entry.take());
+                continue;
+            }
+            let entry = entry.as_mut().expect("entry was checked above");
+            match command.as_str() {
+                "linux" | "linuxefi" => {
+                    if let Some((kernel, options)) = arguments.split_first() {
+                        entry.kernel = Some(kernel.clone());
+                        entry.options = Some(options.join(" "));
+                    }
+                }
+                "initrd" | "initrdefi" => entry.initrds.extend_from_slice(arguments),
+                _ => {}
+            }
+        }
+        self.push_entry(entry);
+    }
+
+    fn parse_grub_setting(&mut self, line: &str) {
+        let Some(setting) = line.strip_prefix("set ") else {
+            return;
+        };
+        let Some((key, value)) = setting.split_once('=') else {
+            return;
+        };
+        let value = unquote(value.trim());
+        match key.trim() {
+            "default" if self.default.is_none() => self.default = Some(value.to_string()),
+            "timeout" if self.timeout.is_none() => self.timeout = value.parse().ok(),
+            _ => {}
+        }
+    }
+
     fn push_entry(&mut self, raw: Option<RawEntry>) {
         let Some(raw) = raw else {
             return;
@@ -274,6 +330,52 @@ fn unquote(value: &str) -> &str {
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
         .unwrap_or(value)
+}
+
+fn parse_grub_menuentry(value: &str) -> Option<RawEntry> {
+    let words = shell_words(value);
+    let (title, options) = words.split_first()?;
+    let mut entry = RawEntry {
+        title: Some(title.clone()),
+        ..RawEntry::default()
+    };
+    for option in options {
+        if let Some(id) = option.strip_prefix("--id=") {
+            entry.id = Some(id.to_string());
+        }
+    }
+    Some(entry)
+}
+
+/// Split the subset of GRUB command syntax needed for static menu entries.
+/// Quotes group words and backslashes escape the following character.
+fn shell_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in line.chars() {
+        if escaped {
+            word.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if Some(character) == quote {
+            quote = None;
+        } else if quote.is_none() && (character == '\'' || character == '"') {
+            quote = Some(character);
+        } else if quote.is_none() && character.is_whitespace() {
+            if !word.is_empty() {
+                words.push(core::mem::take(&mut word));
+            }
+        } else if character != '{' && character != ';' {
+            word.push(character);
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 pub fn path(value: &str) -> Result<PathBuf, &'static str> {
