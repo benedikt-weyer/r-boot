@@ -113,3 +113,9 @@ initramfs:
 ```sh
 ./run-linux-qemu.sh
 ```
+
+Test it against nix-community/nixos-images' rolling minimal netboot build:
+
+```sh
+./run-nixos-qemu.sh
+```

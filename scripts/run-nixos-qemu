@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Download the nix-community/nixos-images rolling minimal netboot build
+# (bzImage + initrd, a NixOS kexec-installer-style closure), then exercise
+# r-boot's Linux x86 EFI 64-bit handover path with it as the "nixos-min"
+# entry.
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+build="$root/target/r-boot-nixos-qemu"
+release="${NIXOS_IMAGES_RELEASE:-nixos-unstable}"
+base_url="https://github.com/nix-community/nixos-images/releases/download/$release"
+cache="$root/.cache/nixos-netboot"
+
+"$root/scripts/build-efi"
+rm -rf "$build"
+mkdir -p "$build/esp/EFI/BOOT" "$build/esp/boot" "$cache"
+
+# Cache the host-side fetch across runs; only re-download if not already
+# present (rm -rf .cache to force a refresh onto the current rolling build).
+[[ -f "$cache/netboot.ipxe" ]] || curl --fail --location --output "$cache/netboot.ipxe" "$base_url/netboot-x86_64-linux.ipxe"
+[[ -f "$cache/bzImage" ]] || curl --fail --location --output "$cache/bzImage" "$base_url/bzImage-x86_64-linux"
+[[ -f "$cache/initrd" ]] || curl --fail --location --output "$cache/initrd" "$base_url/initrd-x86_64-linux"
+
+# The ipxe script carries the generated `init=/nix/store/...-init` path and
+# other required params (root=fstab, lsm=...) tied to this specific build;
+# lift them from its `kernel` line instead of hardcoding a store path here.
+kernel_line="$(grep '^kernel ' "$cache/netboot.ipxe")"
+options="$(printf '%s\n' "$kernel_line" | cut -d' ' -f3- | sed 's/ \${cmdline}$//')"
+if [[ -z "$options" ]]; then
+  printf 'could not extract kernel command line from %s\n' "$cache/netboot.ipxe" >&2
+  exit 1
+fi
+
+cp "$root/target/EFI/BOOT/BOOTX64.EFI" "$build/esp/EFI/BOOT/BOOTX64.EFI"
+cp "$cache/bzImage" "$build/esp/boot/vmlinuz"
+cp "$cache/initrd" "$build/esp/boot/initramfs"
+cat >"$build/r-boot.toml" <<EOF
+default = "nixos-min"
+timeout = 5
+
+[[entries]]
+id = "nixos-min"
+title = "NixOS (minimal netboot)"
+kind = "linux"
+linux = "/boot/vmlinuz"
+initrd = "/boot/initramfs"
+options = "console=ttyS0 $options"
+EOF
+
+truncate -s 768M "$build/esp.img"
+mkfs.fat -F 32 "$build/esp.img" >/dev/null
+mmd -i "$build/esp.img" ::EFI ::EFI/BOOT ::boot
+mcopy -i "$build/esp.img" "$build/esp/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
+mcopy -i "$build/esp.img" "$build/esp/boot/vmlinuz" ::boot/vmlinuz
+mcopy -i "$build/esp.img" "$build/esp/boot/initramfs" ::boot/initramfs
+mcopy -i "$build/esp.img" "$build/r-boot.toml" ::boot/r-boot.toml
+
+if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
+  printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
+  exit 2
+fi
+
+accel_args=()
+if [[ -w /dev/kvm ]]; then
+  accel_args=(-enable-kvm -cpu host)
+else
+  accel_args=(-cpu qemu64)
+fi
+
+# -nodefaults + explicit -netdev/-device/-vga: the q35 machine type auto-attaches
+# an empty CD-ROM drive unless told otherwise, which is pointless here.
+qemu-system-x86_64 \
+  -machine q35 -m 2G "${accel_args[@]}" \
+  -nodefaults \
+  -vga std \
+  -netdev user,id=net0 -device e1000e,netdev=net0 \
+  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive format=raw,file="$build/esp.img" \
+  -object rng-random,filename=/dev/urandom,id=rng0 \
+  -device virtio-rng-pci,rng=rng0 \
+  -serial stdio \
+  -no-reboot

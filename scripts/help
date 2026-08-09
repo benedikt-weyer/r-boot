@@ -18,6 +18,7 @@ r-boot developer commands
   RBOOT_KERNEL_URL=https://example/kernel.elf ./run-qemu
                               download a compatible ELF then boot it
   ./run-linux-qemu             download Alpine netboot and test Linux handover
+  ./run-nixos-qemu              download nixos-images minimal netboot and test Linux handover
 
 This is a Limine boot-protocol loader. Ordinary Linux bzImage, vmlinuz, and
 distribution ISO images use the Linux boot protocol. r-boot supports its
