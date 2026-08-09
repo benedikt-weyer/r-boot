@@ -36,6 +36,9 @@ mkfs.fat -F 32 "$build/esp.img" >/dev/null
 mmd -i "$build/esp.img" ::EFI ::EFI/BOOT ::boot
 mcopy -i "$build/esp.img" "$build/esp/EFI/BOOT/BOOTX64.EFI" ::EFI/BOOT/BOOTX64.EFI
 mcopy -i "$build/esp.img" "$build/esp/boot/kernel.elf" ::boot/kernel.elf
+for module in init console std-smoke; do
+  mcopy -i "$build/esp.img" "$build/esp/boot/$module.elf" "::boot/$module.elf"
+done
 
 ovmf_code="${OVMF_CODE:-}"
 if [[ -z "$ovmf_code" || ! -f "$ovmf_code" ]]; then
