@@ -12,6 +12,8 @@ use uefi::{CString16, cstr16, system};
 use crate::spinner::Mode as SpinnerMode;
 use crate::splash::Image as SplashImage;
 
+const ENTRIES_PER_PAGE: usize = 10;
+
 #[derive(Debug)]
 pub enum Kind {
     Linux,
@@ -134,6 +136,15 @@ impl Menu {
                 }
                 Some(Key::Special(ScanCode::DOWN)) => {
                     selected = (selected + 1) % self.entries.len()
+                }
+                Some(Key::Special(ScanCode::LEFT)) => {
+                    let page = page_for(selected).saturating_sub(1);
+                    selected = entry_on_page(selected, self.entries.len(), page);
+                }
+                Some(Key::Special(ScanCode::RIGHT)) => {
+                    let last_page = page_count(self.entries.len()) - 1;
+                    let page = core::cmp::min(page_for(selected) + 1, last_page);
+                    selected = entry_on_page(selected, self.entries.len(), page);
                 }
                 Some(Key::Printable(character)) if character == '\r' => {
                     let _ = boot::close_event(timer);
@@ -268,12 +279,20 @@ impl Menu {
             None => uefi::println!("Select an entry:"),
         }
         uefi::println!();
-        for (index, entry) in self.entries.iter().enumerate() {
+        let page = page_for(selected);
+        let pages = page_count(self.entries.len());
+        let first = page * ENTRIES_PER_PAGE;
+        let last = core::cmp::min(first + ENTRIES_PER_PAGE, self.entries.len());
+        for (index, entry) in self.entries[first..last].iter().enumerate() {
+            let index = first + index;
             let marker = if index == selected { '>' } else { ' ' };
             uefi::println!("{marker} {}", entry.title);
         }
         uefi::println!();
-        uefi::println!("Use Up/Down and Enter. Press c to configure.");
+        if pages > 1 {
+            uefi::println!("Page {} of {pages}", page + 1);
+        }
+        uefi::println!("Use Up/Down and Enter. Left/Right changes pages. Press c to configure.");
     }
 
     fn parse_toml(&mut self, contents: &str) {
@@ -448,6 +467,21 @@ impl Menu {
             }),
         });
     }
+}
+
+fn page_count(entry_count: usize) -> usize {
+    entry_count.div_ceil(ENTRIES_PER_PAGE)
+}
+
+fn page_for(entry_index: usize) -> usize {
+    entry_index / ENTRIES_PER_PAGE
+}
+
+/// Moves to the requested page while preserving the selected row when possible.
+fn entry_on_page(selected: usize, entry_count: usize, page: usize) -> usize {
+    let first = page * ENTRIES_PER_PAGE;
+    let last = core::cmp::min(first + ENTRIES_PER_PAGE, entry_count);
+    first + core::cmp::min(selected % ENTRIES_PER_PAGE, last - first - 1)
 }
 
 /// Reads the spinner preference early, before full boot-entry discovery starts.

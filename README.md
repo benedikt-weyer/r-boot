@@ -42,7 +42,8 @@ required for explicit 64-bit boot-parameter handoff.
 - `boot/grub/grub.cfg` and `grub/grub.cfg`, using GRUB's static Linux
   `menuentry` format.
 
-Use Up/Down and Enter to select an entry. The selected default boots after
+Use Up/Down and Enter to select an entry. Menus with more than ten entries
+are paginated; use Left/Right to move between pages. The selected default boots after
 five seconds unless `timeout` is configured; `timeout = 0` boots immediately.
 Press `c` to edit the timeout, spinner mode, firmware-logo visibility, and
 the selected entry's splash image; saving writes these settings back to
