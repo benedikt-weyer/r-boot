@@ -4,10 +4,13 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use uefi::boot::{self, EventType, TimerTrigger, Tpl};
+use uefi::boot::{self, EventType, OpenProtocolAttributes, OpenProtocolParams, TimerTrigger, Tpl};
 use uefi::fs::{FileSystem, Path, PathBuf};
+use uefi::proto::console::gop::{BltOp, BltRegion, GraphicsOutput};
 use uefi::proto::console::text::{Key, ScanCode};
 use uefi::{CString16, cstr16, system};
+
+use crate::bgrt;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -70,9 +73,11 @@ impl Menu {
         boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
             .map_err(|_| "cannot set boot-menu timeout")?;
 
+        let logo = bgrt::locate();
+
         let mut remaining = Some(timeout);
         loop {
-            self.draw(selected, remaining);
+            self.draw(selected, remaining, logo.as_ref());
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             match remaining {
@@ -116,7 +121,7 @@ impl Menu {
                     return Ok(selected);
                 }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
-                    if let Some(new_timeout) = self.edit_config(timeout)? {
+                    if let Some(new_timeout) = self.edit_config(timeout, logo.as_ref())? {
                         timeout = new_timeout;
                         if timeout > 0 {
                             boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
@@ -132,10 +137,14 @@ impl Menu {
 
     /// Lets the user adjust the boot-menu timeout for the current boot.
     /// Returns the new timeout on save, or `None` if the edit was cancelled.
-    fn edit_config(&self, current_timeout: u64) -> Result<Option<u64>, &'static str> {
+    fn edit_config(
+        &self,
+        current_timeout: u64,
+        logo: Option<&bgrt::Logo>,
+    ) -> Result<Option<u64>, &'static str> {
         let mut value = current_timeout;
         loop {
-            self.draw_config(value);
+            self.draw_config(value, logo);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -152,10 +161,13 @@ impl Menu {
         }
     }
 
-    fn draw_config(&self, timeout: u64) {
+    fn draw_config(&self, timeout: u64, logo: Option<&bgrt::Logo>) {
         system::with_stdout(|output| {
             let _ = output.clear();
         });
+        if let Some(logo) = logo {
+            draw_logo(logo);
+        }
         uefi::println!("r-boot configuration");
         uefi::println!();
         uefi::println!("Timeout: {timeout}s");
@@ -177,10 +189,13 @@ impl Menu {
             .unwrap_or(0)
     }
 
-    fn draw(&self, selected: usize, remaining: Option<u64>) {
+    fn draw(&self, selected: usize, remaining: Option<u64>, logo: Option<&bgrt::Logo>) {
         system::with_stdout(|output| {
             let _ = output.clear();
         });
+        if let Some(logo) = logo {
+            draw_logo(logo);
+        }
         uefi::println!("r-boot");
         match remaining {
             Some(seconds) => uefi::println!("Select an entry (boots in {seconds}s):"),
@@ -354,6 +369,41 @@ impl Menu {
             options: raw.options,
         });
     }
+}
+
+/// Blits the firmware's boot logo (as located via [`bgrt::locate`]) onto the
+/// GOP framebuffer at the position the firmware itself drew it. Opened with
+/// `GetProtocol` rather than exclusively, so the text console driver keeps
+/// its own hold on the GOP and `uefi::println!` keeps working afterwards.
+fn draw_logo(logo: &bgrt::Logo) {
+    let Ok(handle) = boot::get_handle_for_protocol::<GraphicsOutput>() else {
+        return;
+    };
+    let params = OpenProtocolParams {
+        handle,
+        agent: boot::image_handle(),
+        controller: None,
+    };
+    // SAFETY: `GetProtocol` is a read-only, non-exclusive open; we only blit
+    // a buffer we own and never reconfigure the video mode, so this cannot
+    // invalidate any other outstanding user of the protocol.
+    let Ok(mut gop) = (unsafe {
+        boot::open_protocol::<GraphicsOutput>(params, OpenProtocolAttributes::GetProtocol)
+    }) else {
+        return;
+    };
+    let (width, height) = gop.current_mode_info().resolution();
+    if logo.x + logo.width > width || logo.y + logo.height > height {
+        // The video mode changed since the firmware drew the logo; skip it
+        // rather than risk an out-of-bounds blit.
+        return;
+    }
+    let _ = gop.blt(BltOp::BufferToVideo {
+        buffer: &logo.pixels,
+        src: BltRegion::Full,
+        dest: (logo.x, logo.y),
+        dims: (logo.width, logo.height),
+    });
 }
 
 #[derive(Default)]

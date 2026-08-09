@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod bgrt;
 mod elf;
 mod limine;
 mod linux;
