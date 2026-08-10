@@ -20,6 +20,12 @@ const ENTRY_LIST_ROW: usize = 3;
 /// Row of the status line ("Select an entry..."), updated in place each
 /// countdown tick instead of redrawing the whole screen.
 const STATUS_ROW: usize = 1;
+/// Row where the first config option is printed by `draw_config`.
+const CONFIG_ROW_BASE: usize = 2;
+const CONFIG_OPTION_COUNT: usize = 4;
+/// Width a config line is padded to so a shorter replacement value fully
+/// overwrites a longer previous one.
+const CONFIG_LINE_WIDTH: usize = 40;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -226,8 +232,8 @@ impl Menu {
         let mut logo_visible = self.logo_visible;
         let mut image = self.entries[entry_index].image;
         let mut selected = 0;
+        self.draw_config(timeout, spinner_mode, logo_visible, image, selected);
         loop {
-            self.draw_config(timeout, spinner_mode, logo_visible, image, selected);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             let mut events = unsafe { [key_event.unsafe_clone()] };
@@ -235,27 +241,41 @@ impl Menu {
             let key = system::with_stdin(|input| input.read_key())
                 .map_err(|_| "cannot read keyboard input")?;
             match key {
-                Some(Key::Special(ScanCode::UP)) => selected = selected.saturating_sub(1),
-                Some(Key::Special(ScanCode::DOWN)) => selected = (selected + 1) % 4,
-                Some(Key::Special(ScanCode::LEFT)) => match selected {
-                    0 => timeout = timeout.saturating_sub(1),
-                    1 => spinner_mode = spinner_mode.previous(),
-                    2 => logo_visible = !logo_visible,
-                    3 => image = image.and_then(SplashImage::previous),
-                    _ => unreachable!(),
-                },
-                Some(Key::Special(ScanCode::RIGHT)) => match selected {
-                    0 => timeout = timeout.saturating_add(1),
-                    1 => spinner_mode = spinner_mode.next(),
-                    2 => logo_visible = !logo_visible,
-                    3 => {
-                        image = match image {
-                            None => Some(SplashImage::Nixos),
-                            Some(image) => image.next(),
-                        }
+                Some(Key::Special(ScanCode::UP)) => {
+                    let previous = selected;
+                    selected = selected.saturating_sub(1);
+                    self.update_config_marker(previous, selected);
+                }
+                Some(Key::Special(ScanCode::DOWN)) => {
+                    let previous = selected;
+                    selected = (selected + 1) % CONFIG_OPTION_COUNT;
+                    self.update_config_marker(previous, selected);
+                }
+                Some(Key::Special(ScanCode::LEFT)) => {
+                    match selected {
+                        0 => timeout = timeout.saturating_sub(1),
+                        1 => spinner_mode = spinner_mode.previous(),
+                        2 => logo_visible = !logo_visible,
+                        3 => image = image.and_then(SplashImage::previous),
+                        _ => unreachable!(),
                     }
-                    _ => unreachable!(),
-                },
+                    self.update_config_line(selected, timeout, spinner_mode, logo_visible, image);
+                }
+                Some(Key::Special(ScanCode::RIGHT)) => {
+                    match selected {
+                        0 => timeout = timeout.saturating_add(1),
+                        1 => spinner_mode = spinner_mode.next(),
+                        2 => logo_visible = !logo_visible,
+                        3 => {
+                            image = match image {
+                                None => Some(SplashImage::Nixos),
+                                Some(image) => image.next(),
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                    self.update_config_line(selected, timeout, spinner_mode, logo_visible, image);
+                }
                 Some(Key::Printable(character)) if character == '\r' => {
                     persist_settings(
                         fs,
@@ -288,23 +308,46 @@ impl Menu {
         self.clear();
         uefi::println!("r-boot configuration");
         uefi::println!();
-        let timeout_marker = if selected == 0 { '>' } else { ' ' };
-        let spinner_marker = if selected == 1 { '>' } else { ' ' };
-        let logo_marker = if selected == 2 { '>' } else { ' ' };
-        let image_marker = if selected == 3 { '>' } else { ' ' };
-        uefi::println!("{timeout_marker} Timeout: {timeout}s");
-        uefi::println!("{spinner_marker} Spinner: {}", spinner_mode.as_str());
-        uefi::println!(
-            "{logo_marker} Firmware logo: {}",
-            if logo_visible { "on" } else { "off" }
-        );
-        uefi::println!(
-            "{image_marker} Selected entry image: {}",
-            image.map(SplashImage::as_str).unwrap_or("none")
-        );
+        for index in 0..CONFIG_OPTION_COUNT {
+            let marker = if index == selected { '>' } else { ' ' };
+            uefi::println!(
+                "{}",
+                config_line(index, timeout, spinner_mode, logo_visible, image, marker)
+            );
+        }
         uefi::println!();
         uefi::println!("Use Up/Down to select, Left/Right to change.");
         uefi::println!("Enter saves to boot/r-boot.toml. Esc cancels.");
+    }
+
+    /// Moves the config-screen selection marker between two rows without
+    /// redrawing the rest of the screen.
+    fn update_config_marker(&self, previous: usize, selected: usize) {
+        self.set_config_marker(previous, ' ');
+        self.set_config_marker(selected, '>');
+    }
+
+    fn set_config_marker(&self, index: usize, marker: char) {
+        system::with_stdout(|output| {
+            let _ = output.set_cursor_position(0, CONFIG_ROW_BASE + index);
+            let _ = write!(output, "{marker}");
+        });
+    }
+
+    /// Rewrites the currently selected config row after its value changes.
+    fn update_config_line(
+        &self,
+        index: usize,
+        timeout: u64,
+        spinner_mode: SpinnerMode,
+        logo_visible: bool,
+        image: Option<SplashImage>,
+    ) {
+        let text = config_line(index, timeout, spinner_mode, logo_visible, image, '>');
+        system::with_stdout(|output| {
+            let _ = output.set_cursor_position(0, CONFIG_ROW_BASE + index);
+            let _ = write!(output, "{text:<CONFIG_LINE_WIDTH$}");
+        });
     }
 
     fn default_index(&self) -> usize {
@@ -516,6 +559,31 @@ impl Menu {
                 image
             }),
         });
+    }
+}
+
+/// Formats one line of the config screen, used for both the initial full
+/// draw and later dirty updates of a single row.
+fn config_line(
+    index: usize,
+    timeout: u64,
+    spinner_mode: SpinnerMode,
+    logo_visible: bool,
+    image: Option<SplashImage>,
+    marker: char,
+) -> String {
+    match index {
+        0 => alloc::format!("{marker} Timeout: {timeout}s"),
+        1 => alloc::format!("{marker} Spinner: {}", spinner_mode.as_str()),
+        2 => alloc::format!(
+            "{marker} Firmware logo: {}",
+            if logo_visible { "on" } else { "off" }
+        ),
+        3 => alloc::format!(
+            "{marker} Selected entry image: {}",
+            image.map(SplashImage::as_str).unwrap_or("none")
+        ),
+        _ => unreachable!(),
     }
 }
 
