@@ -16,9 +16,10 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use rand::rngs::OsRng;
+use rand::RngCore;
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, IsCa, KeyUsagePurpose, PKCS_RSA_SHA256,
-    PublicKeyData, SignatureAlgorithm, SigningKey as RcgenSigningKey,
+    PublicKeyData, SerialNumber, SignatureAlgorithm, SigningKey as RcgenSigningKey,
 };
 use rsa::pkcs1::EncodeRsaPublicKey;
 use rsa::pkcs1v15;
@@ -107,6 +108,7 @@ pub fn create(force: bool) -> Result<(), Box<dyn Error>> {
     params.not_after = now + Duration::days(VALIDITY_DAYS);
     params.is_ca = IsCa::NoCa;
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    params.serial_number = Some(random_serial_number());
 
     let cert = params.self_signed(&signing_key)?;
 
@@ -216,4 +218,15 @@ fn write_file(path: &Path, contents: &[u8], mode: u32) -> Result<(), Box<dyn Err
 
 fn running_as_root() -> bool {
     unsafe { libc::geteuid() == 0 }
+}
+
+/// A random 20-byte X.509 serial number. Without the `crypto` feature (kept
+/// off to stay off rcgen's C `ring`/`aws_lc_rs` backends), rcgen doesn't
+/// generate one itself. The top bit of the first byte is cleared so the
+/// DER INTEGER encoding stays unambiguously positive.
+fn random_serial_number() -> SerialNumber {
+    let mut bytes = [0u8; 20];
+    OsRng.fill_bytes(&mut bytes);
+    bytes[0] &= 0x7f;
+    SerialNumber::from(bytes.to_vec())
 }
