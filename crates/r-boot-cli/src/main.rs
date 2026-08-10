@@ -39,6 +39,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
         Command::SetSpinner(mode) => set_spinner(&config_path, mode),
         Command::SetLogo(visible) => set_logo(&config_path, *visible),
         Command::Remove { id, purge } => remove(&args.esp, &config_path, id, *purge),
+        Command::ListFiles => list_files(&args.esp, &config_path),
     }
 }
 
@@ -172,6 +173,68 @@ fn remove(esp: &Path, config_path: &Path, id: &str, purge: bool) -> Result<(), B
                 println!("removed {}", path.display());
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Scans the directory r-boot-conf-builder copies kernels/initrds into
+/// (`<esp>/boot/nixos`) and lists what's actually present on disk, cross
+/// referenced against the entries that still point at each file.
+fn list_files(esp: &Path, config_path: &Path) -> Result<(), Box<dyn Error>> {
+    let config = load(config_path)?;
+    let kernels_dir = esp.join("boot").join("nixos");
+
+    let mut files: Vec<PathBuf> = match fs::read_dir(&kernels_dir) {
+        Ok(read_dir) => read_dir
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect(),
+        Err(err) => {
+            return Err(format!("cannot read {}: {err}", kernels_dir.display()).into());
+        }
+    };
+    files.sort();
+
+    if files.is_empty() {
+        println!("no kernel/initramfs files found in {}", kernels_dir.display());
+        return Ok(());
+    }
+
+    println!("kernel/initramfs files in {}:", kernels_dir.display());
+    for file in &files {
+        let size = fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+        let referenced_by: Vec<&str> = config
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .linux
+                    .as_deref()
+                    .is_some_and(|p| resolve_esp_path(esp, p) == *file)
+                    || entry
+                        .efi
+                        .as_deref()
+                        .is_some_and(|p| resolve_esp_path(esp, p) == *file)
+                    || entry
+                        .initrd
+                        .iter()
+                        .any(|p| resolve_esp_path(esp, p) == *file)
+            })
+            .map(|entry| entry.id.as_str())
+            .collect();
+
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let status = if referenced_by.is_empty() {
+            "unreferenced".to_string()
+        } else {
+            format!("used by {}", referenced_by.join(", "))
+        };
+        println!("  {name} ({size} bytes, {status})");
     }
 
     Ok(())

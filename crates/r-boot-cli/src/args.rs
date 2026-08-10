@@ -13,6 +13,8 @@ pub enum Command {
     SetLogo(bool),
     /// Remove a boot entry, optionally deleting its kernel/initramfs files.
     Remove { id: String, purge: bool },
+    /// Scan the ESP's kernels directory and list kernel/initramfs files found.
+    ListFiles,
 }
 
 pub struct Args {
@@ -33,7 +35,8 @@ impl Args {
              set-spinner <mode>      set spinner: off, text, or graphical\n  \
              set-logo <on|off>       show or hide the firmware logo\n  \
              remove <id> [--purge]   remove a boot entry (--purge also deletes\n  \
-             \x20                        its kernel/initramfs files)"
+             \x20                        its kernel/initramfs files)\n  \
+             list-files              scan the ESP and list kernel/initramfs files"
         );
     }
 
@@ -96,6 +99,7 @@ impl Args {
                     };
                     command = Some(Command::Remove { id, purge });
                 }
+                "list-files" => command = Some(Command::ListFiles),
                 other => return Err(format!("unrecognized argument: {other}")),
             }
         }
