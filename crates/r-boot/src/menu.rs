@@ -172,7 +172,7 @@ impl Menu {
                     let _ = boot::close_event(timer);
                     return Ok(selected);
                 }
-                Some(Key::Printable(character)) if character == 't' || character == 'T' => {
+                Some(Key::Printable(character)) if character == 'r' || character == 'R' => {
                     let _ = boot::close_event(timer);
                     reboot(ResetType::COLD);
                 }
@@ -399,7 +399,7 @@ impl Menu {
             uefi::println!("Page {} of {pages}", page + 1);
         }
         uefi::println!("Use Up/Down and Enter. Left/Right changes pages. Press c to configure.");
-        uefi::println!("Press t to reboot, s to shut down, f for firmware setup.");
+        uefi::println!("Press r to reboot, s to shut down, f for firmware setup.");
     }
 
     fn parse_toml(&mut self, contents: &str) {
