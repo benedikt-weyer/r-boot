@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod bgrt;
+mod chainload;
 mod console;
 mod elf;
 mod limine;
