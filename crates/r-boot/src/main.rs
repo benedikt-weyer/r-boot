@@ -11,6 +11,7 @@ mod limine;
 mod linux;
 mod menu;
 mod paging;
+mod secureboot;
 mod spinner;
 mod splash;
 

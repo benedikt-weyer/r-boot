@@ -218,6 +218,10 @@ impl Menu {
                     crate::chainload::run(fs)?;
                     self.draw(selected, remaining);
                 }
+                Some(Key::Printable(character)) if character == 'e' || character == 'E' => {
+                    crate::secureboot::enroll(fs);
+                    self.draw(selected, remaining);
+                }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
                     if self.edit_config(fs, selected)? {
                         timeout = self.timeout.unwrap_or(5);
@@ -435,6 +439,7 @@ impl Menu {
         uefi::println!("Use Up/Down and Enter. Left/Right changes pages. Press c to configure.");
         uefi::println!("Press r to reboot, s to shut down, f for firmware setup, t for console.");
         uefi::println!("Press b to chainload another bootloader.");
+        uefi::println!("Press e to enroll secure boot keys.");
     }
 
     fn parse_toml(&mut self, contents: &str) {

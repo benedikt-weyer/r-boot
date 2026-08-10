@@ -50,6 +50,16 @@ let
       --output "$SIGNED_EFI" \
       "$BOOT_EFI"
     BOOT_EFI="$SIGNED_EFI"
+
+    # DER, not PEM: r-boot's own "e" (enroll secure boot keys) menu command
+    # reads this straight into an EFI_SIGNATURE_LIST/db entry at runtime, in
+    # a no_std UEFI binary with no PEM-decoding of its own. mkdir first: on
+    # a fresh ESP this runs before r-boot-conf-builder below has had a
+    # chance to create EFI/BOOT itself.
+    ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg efi.efiSysMountPoint}/EFI/BOOT
+    ${pkgs.openssl}/bin/openssl x509 \
+      -in "$CERT_FILE" -inform PEM \
+      -out ${lib.escapeShellArg efi.efiSysMountPoint}/EFI/BOOT/db.der -outform DER
   '';
 
   installBootLoader = pkgs.writeShellScript "install-r-boot.sh" ''
@@ -86,7 +96,9 @@ in
 
     sign-bootloader = lib.mkEnableOption ''
       signing r-boot.efi with sign-cert/sign-pk (Authenticode, via sbsign)
-      before it's installed to the ESP, for UEFI secure boot
+      before it's installed to the ESP, for UEFI secure boot. Also installs
+      sign-cert as EFI/BOOT/db.der (DER-encoded) alongside it, for r-boot's
+      own "e" (enroll secure boot keys) menu command to enroll as PK/KEK/db
     '';
 
     sign-cert = lib.mkOption {
