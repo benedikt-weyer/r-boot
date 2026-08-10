@@ -5,19 +5,28 @@ set -euo pipefail
 # verify r-boot brings up a full NixOS system as its installed bootloader
 # (not just the standalone kernel/initrd smoke tests in run-linux-qemu /
 # run-nixos-qemu).
+#
+# The image was built secure-boot-enrolled (see build-nixos-image), so this
+# boots under the matching secure-boot-capable OVMF firmware, with SMM
+# enabled and the same efi-vars.fd build-nixos-image copied out — not the
+# plain $OVMF_CODE / no-NVRAM setup the other run-*-qemu scripts use, which
+# don't exercise secure boot at all.
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-nixos-image"
 image="$build/nixos.qcow2"
+vars="$build/efi-vars.fd"
 
-if [[ ! -f "$image" ]]; then
-  printf 'No %s found; run scripts/build-nixos-image first.\n' "$image" >&2
+if [[ ! -f "$image" || ! -f "$vars" ]]; then
+  printf 'No %s/%s found; run scripts/build-nixos-image first.\n' "$image" "$vars" >&2
   exit 1
 fi
 
-if [[ -z "${OVMF_CODE:-}" || ! -f "$OVMF_CODE" ]]; then
-  printf 'Set OVMF_CODE to OVMF_CODE.fd (Nix shell normally provides OVMF).\n' >&2
-  exit 2
+ovmf="$(nix build "$root#nixos-image-ovmf" --no-link --print-out-paths)"
+ovmf_code="$ovmf/FV/OVMF_CODE.fd"
+if [[ ! -f "$ovmf_code" ]]; then
+  printf 'nixos-image-ovmf build did not produce %s\n' "$ovmf_code" >&2
+  exit 1
 fi
 
 accel_args=()
@@ -29,12 +38,17 @@ fi
 
 # -nodefaults + explicit -netdev/-device/-vga: the q35 machine type auto-attaches
 # an empty CD-ROM drive unless told otherwise, which is pointless here.
+# smm=on + the cfi.pflash01 secure property: required for OVMF's secure
+# boot enforcement (AuthVariable/SMM services), matching what
+# nixos/lib/make-disk-image.nix itself does when OVMF.systemManagementModeRequired.
 qemu-system-x86_64 \
-  -machine q35 -m 2G "${accel_args[@]}" \
+  -machine q35,smm=on -m 2G "${accel_args[@]}" \
+  -global driver=cfi.pflash01,property=secure,value=on \
   -nodefaults \
   -vga std \
   -netdev user,id=net0 -device e1000e,netdev=net0 \
-  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+  -drive if=pflash,format=raw,readonly=on,file="$ovmf_code" \
+  -drive if=pflash,format=raw,file="$vars" \
   -drive if=virtio,format=qcow2,file="$image" \
   -object rng-random,filename=/dev/urandom,id=rng0 \
   -device virtio-rng-pci,rng=rng0 \

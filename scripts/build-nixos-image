@@ -5,6 +5,13 @@ set -euo pipefail
 # flake.nix as `nixosConfigurations.r-boot-qemu`) that installs r-boot as its
 # bootloader via `boot.loader.r-boot`, for exercising the NixOS module
 # end to end. Run scripts/run-nixos-image-qemu afterwards to boot it.
+#
+# The image is built with boot.loader.r-boot.sign-bootloader enabled and a
+# throwaway pki-bundle seeded in, so its installed r-boot.efi is actually
+# signed. scripts/run-nixos-image-qemu then boots it under OVMF with that
+# same bundle's cert enrolled as PK/KEK/db and secure boot enforced (see
+# qemuTestPki/qemuTestOVMF/qemuTestVars in flake.nix) — an unsigned or
+# wrongly-signed r-boot.efi would fail to boot there.
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build="$root/target/r-boot-nixos-image"
@@ -18,6 +25,13 @@ if [[ -z "$image" ]]; then
   exit 1
 fi
 
-# Copy out of the read-only /nix/store result so QEMU can write to it.
+# Secure-boot vars are built separately from the image itself (see
+# nixos-image-vars in flake.nix): the image build's own internal helper VM
+# boots on a plain, non-enforcing firmware, unrelated to what the finished
+# image later boots under.
+vars="$(nix build "$root#nixos-image-vars" --no-link --print-out-paths)"
+
+# Copy out of the read-only /nix/store result so QEMU can write to them.
 cp --no-preserve=mode "$image" "$build/nixos.qcow2"
-printf 'Built %s\n' "$build/nixos.qcow2"
+cp --no-preserve=mode "$vars" "$build/efi-vars.fd"
+printf 'Built %s (secure-boot vars: %s)\n' "$build/nixos.qcow2" "$build/efi-vars.fd"
