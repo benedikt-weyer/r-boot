@@ -184,6 +184,10 @@ impl Menu {
                     let _ = boot::close_event(timer);
                     reboot_to_firmware_setup();
                 }
+                Some(Key::Printable(character)) if character == 't' || character == 'T' => {
+                    crate::console::run(fs);
+                    self.draw(selected, remaining);
+                }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
                     if self.edit_config(fs, selected)? {
                         timeout = self.timeout.unwrap_or(5);
@@ -399,7 +403,7 @@ impl Menu {
             uefi::println!("Page {} of {pages}", page + 1);
         }
         uefi::println!("Use Up/Down and Enter. Left/Right changes pages. Press c to configure.");
-        uefi::println!("Press r to reboot, s to shut down, f for firmware setup.");
+        uefi::println!("Press r to reboot, s to shut down, f for firmware setup, t for console.");
     }
 
     fn parse_toml(&mut self, contents: &str) {
