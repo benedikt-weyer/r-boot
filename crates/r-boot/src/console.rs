@@ -1,5 +1,6 @@
 //! A minimal interactive shell for browsing the boot filesystem, reachable
-//! from the boot menu via the `t` key. Supports `ls` and `cd`.
+//! from the boot menu via the `t` key. Supports `ls`, `cd`, `pwd`, `clear`,
+//! and `help`.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -259,25 +260,32 @@ fn change_dir(fs: &mut FileSystem, cwd: &mut PathBuf, argument: &str) {
 
 /// Resolves a user-typed path (absolute or relative, `/`- or `\`-separated,
 /// with `.`/`..` components) against the current working directory.
+///
+/// Builds the result as a plain string rather than via [`PathBuf::push`],
+/// since that method miscomputes whether a separator is already present
+/// (it inspects the string's null terminator instead of its last character)
+/// and ends up doubling the separator whenever `cwd` is the root path.
 fn resolve(cwd: &Path, argument: &str) -> Option<PathBuf> {
-    let mut result = if argument.starts_with(['\\', '/']) {
-        PathBuf::from(SEPARATOR_STR)
+    let cwd_string = cwd.to_string();
+    let mut components: Vec<&str> = if argument.starts_with(['\\', '/']) {
+        Vec::new()
     } else {
-        cwd.to_path_buf()
+        cwd_string
+            .split(['\\', '/'])
+            .filter(|component| !component.is_empty())
+            .collect()
     };
     for component in argument.split(['\\', '/']) {
         match component {
             "" | "." => {}
             ".." => {
-                result = result
-                    .parent()
-                    .unwrap_or_else(|| PathBuf::from(SEPARATOR_STR))
+                components.pop();
             }
-            name => {
-                let name = CString16::try_from(name).ok()?;
-                result.push(Path::new(&name));
-            }
+            name => components.push(name),
         }
     }
-    Some(result)
+    let mut result = SEPARATOR_STR.to_string();
+    result.push_str(&components.join("\\"));
+    let result = CString16::try_from(result.as_str()).ok()?;
+    Some(PathBuf::from(result))
 }
