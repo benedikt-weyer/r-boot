@@ -11,3 +11,11 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 clap_complete = "4.6.9"
+libc = "0.2.189"
+rand = "0.8"
+rcgen = { version = "0.14.9", default-features = false, features = ["pem"] }
+rsa = { version = "0.9.10", features = ["pem"] }
+sha2 = { version = "0.10", features = ["oid"] }
+signature = "2.2"
+time = { version = "0.3.55", features = ["formatting"] }
+x509-parser = "0.18.1"

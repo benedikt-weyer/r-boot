@@ -62,11 +62,34 @@ pub enum Command {
     },
     /// Scan the ESP and list kernel/initramfs files found.
     ListFiles,
+    /// Manage the secure boot signing key (pki-bundle: db.key + db.pem).
+    SignKey {
+        #[command(subcommand)]
+        action: SignKeyCommand,
+    },
     /// Print a shell completion script to stdout.
     #[command(hide = true)]
     Completions {
         /// Shell to generate a completion script for.
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SignKeyCommand {
+    /// Generate a new RSA-2048 keypair and self-signed certificate.
+    Create {
+        /// Overwrite an existing pki-bundle.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print information about the current pki-bundle.
+    Show,
+    /// Permanently delete the pki-bundle.
+    Remove {
+        /// Confirm permanent deletion of the private key.
+        #[arg(long)]
+        force: bool,
     },
 }
 
