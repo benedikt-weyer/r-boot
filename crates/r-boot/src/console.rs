@@ -21,7 +21,7 @@ pub fn run(fs: &mut FileSystem) {
     });
     uefi::println!("r-boot console. Type `help` for a list of commands. Tab completes.");
     loop {
-        let prompt = alloc::format!("{cwd}> ");
+        let prompt = alloc::format!("{}> ", display_path(&cwd));
         uefi::print!("{prompt}");
         let Some(line) = read_line(fs, &cwd, &prompt) else {
             break;
@@ -35,7 +35,7 @@ pub fn run(fs: &mut FileSystem) {
         match command {
             "ls" => list(fs, &cwd, argument),
             "cd" => change_dir(fs, &mut cwd, argument),
-            "pwd" => uefi::println!("{cwd}"),
+            "pwd" => uefi::println!("{}", display_path(&cwd)),
             "clear" => {
                 system::with_stdout(|output| {
                     let _ = output.clear();
@@ -142,7 +142,7 @@ fn complete_path(
     let candidates = entries
         .flatten()
         .map(|info| {
-            let trailing = if info.is_directory() { '\\' } else { ' ' };
+            let trailing = if info.is_directory() { '/' } else { ' ' };
             (info.file_name().to_string(), Some(trailing))
         })
         .collect();
@@ -192,6 +192,12 @@ fn apply_completion(
     }
 }
 
+/// Renders a path for display with `/` separators instead of the `\`
+/// separators the underlying UEFI filesystem paths actually use.
+fn display_path(path: &Path) -> String {
+    path.to_string().replace('\\', "/")
+}
+
 /// Longest common leading substring shared by every string in `strings`.
 fn longest_common_prefix(strings: &[&str]) -> String {
     let mut chars: Vec<char> = match strings.first() {
@@ -232,13 +238,16 @@ fn list(fs: &mut FileSystem, cwd: &Path, argument: &str) {
             }
             for (name, is_directory) in names {
                 if is_directory {
-                    uefi::println!("{name}\\");
+                    uefi::println!("{name}/");
                 } else {
                     uefi::println!("{name}");
                 }
             }
         }
-        Err(_) => uefi::println!("ls: cannot access {target}: no such directory"),
+        Err(_) => uefi::println!(
+            "ls: cannot access {}: no such directory",
+            display_path(&target)
+        ),
     }
 }
 
@@ -253,8 +262,8 @@ fn change_dir(fs: &mut FileSystem, cwd: &mut PathBuf, argument: &str) {
     };
     match fs.metadata(&target) {
         Ok(info) if info.is_directory() => *cwd = target,
-        Ok(_) => uefi::println!("cd: {target}: not a directory"),
-        Err(_) => uefi::println!("cd: {target}: no such directory"),
+        Ok(_) => uefi::println!("cd: {}: not a directory", display_path(&target)),
+        Err(_) => uefi::println!("cd: {}: no such directory", display_path(&target)),
     }
 }
 
