@@ -53,10 +53,17 @@ When neither source contains entries, the original fixed
 
 The native format deliberately uses a small TOML subset: quoted strings,
 integer `timeout`, `spinner = "off" | "text" | "graphical"`, `logo = true |
-false`, and repeated `[[entries]]` tables. The spinner defaults to graphical
-rendering and the firmware logo is shown by default.
+false`, `fastboot = "off" | "next-boot" | "on"`, and repeated `[[entries]]`
+tables. The spinner defaults to graphical rendering and the firmware logo is
+shown by default.
 Entries may set `image = "nixos"` or `image = "linux"` to replace the firmware
 logo with a built-in NixOS or Linux penguin splash while that entry boots.
+
+`fastboot` skips the menu, the countdown, the spinner, and all splash art,
+and boots the default entry immediately with no keyboard interruption
+possible. `fastboot = "on"` does this every boot; `fastboot = "next-boot"`
+does it once and then rewrites `boot/r-boot.toml` back to `off` so the next
+boot returns to normal menu behavior.
 
 ```toml
 default = "alpine"
@@ -133,6 +140,7 @@ nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-default nixos-generation-
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-timeout 10
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-spinner text
 nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-logo off
+nix run github:benedikt-weyer/r-boot#r-boot-cli -- set-fastboot next-boot
 ```
 
 Add `r-boot.packages.x86_64-linux.r-boot-cli` to `environment.systemPackages`

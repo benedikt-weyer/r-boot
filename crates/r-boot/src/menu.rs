@@ -35,6 +35,32 @@ pub enum Kind {
     Efi,
 }
 
+/// Skips menu interaction, the spinner, and splash art to boot the default
+/// entry as quickly as possible.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FastbootMode {
+    #[default]
+    Off,
+    /// Boots fast exactly once, then rewrites `r-boot.toml` back to `off`.
+    NextBootOnly,
+    On,
+}
+
+impl FastbootMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "next-boot" | "next" | "only-next-boot" => Some(Self::NextBootOnly),
+            "on" => Some(Self::On),
+            _ => None,
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
 #[derive(Debug)]
 pub struct Entry {
     pub id: String,
@@ -371,7 +397,7 @@ impl Menu {
         });
     }
 
-    fn default_index(&self) -> usize {
+    pub(crate) fn default_index(&self) -> usize {
         self.default
             .as_deref()
             .and_then(|default| {
@@ -645,6 +671,53 @@ pub fn configured_spinner_mode(fs: &mut FileSystem) -> SpinnerMode {
         }
     }
     SpinnerMode::default()
+}
+
+/// Reads the fastboot preference early, before boot-entry discovery starts,
+/// so the caller can skip the spinner and splash art entirely.
+pub fn configured_fastboot_mode(fs: &mut FileSystem) -> FastbootMode {
+    let Ok(contents) = fs.read_to_string(Path::new(cstr16!("\\boot\\r-boot.toml"))) else {
+        return FastbootMode::default();
+    };
+    for line in contents.lines() {
+        let line = strip_comment(line).trim();
+        if line == "[[entries]]" {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim() == "fastboot" {
+                if let Some(mode) = FastbootMode::parse(unquote(value.trim())) {
+                    return mode;
+                }
+            }
+        }
+    }
+    FastbootMode::default()
+}
+
+/// Rewrites the `fastboot` key back to `off` after a `next-boot` fast boot
+/// has been used, leaving the rest of `r-boot.toml` untouched.
+pub fn disable_next_boot_fastboot(fs: &mut FileSystem) {
+    let path = Path::new(cstr16!("\\boot\\r-boot.toml"));
+    let Ok(contents) = fs.read_to_string(path) else {
+        return;
+    };
+    let mut updated = String::new();
+    let mut in_entries = false;
+    for line in contents.lines() {
+        if !in_entries {
+            let trimmed = strip_comment(line).trim();
+            if trimmed == "[[entries]]" {
+                in_entries = true;
+            } else if trimmed.split_once('=').map(|(key, _)| key.trim()) == Some("fastboot") {
+                updated.push_str("fastboot = \"off\"\n");
+                continue;
+            }
+        }
+        updated.push_str(line);
+        updated.push('\n');
+    }
+    let _ = fs.write(path, updated.as_bytes());
 }
 
 /// Reads the firmware-logo preference early, before boot-entry discovery.

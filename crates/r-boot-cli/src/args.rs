@@ -46,6 +46,12 @@ pub enum Command {
         /// Whether the firmware logo should be shown.
         visible: OnOff,
     },
+    /// Change fastboot: skip menu interaction, the spinner, and splash art
+    /// to boot the default entry as quickly as possible.
+    SetFastboot {
+        /// Fastboot mode.
+        mode: FastbootMode,
+    },
     /// Remove a boot entry.
     Remove {
         /// Id of the entry to remove.
@@ -77,6 +83,24 @@ impl SpinnerMode {
             SpinnerMode::Off => "off",
             SpinnerMode::Text => "text",
             SpinnerMode::Graphical => "graphical",
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum FastbootMode {
+    Off,
+    /// Fast boot exactly once, then automatically revert to `off`.
+    NextBoot,
+    On,
+}
+
+impl FastbootMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FastbootMode::Off => "off",
+            FastbootMode::NextBoot => "next-boot",
+            FastbootMode::On => "on",
         }
     }
 }

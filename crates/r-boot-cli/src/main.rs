@@ -33,6 +33,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         Command::SetTimeout { seconds } => set_timeout(&config_path, *seconds),
         Command::SetSpinner { mode } => set_spinner(&config_path, mode.as_str()),
         Command::SetLogo { visible } => set_logo(&config_path, visible.as_bool()),
+        Command::SetFastboot { mode } => set_fastboot(&config_path, mode.as_str()),
         Command::Remove { id, purge } => remove(&cli.esp, &config_path, id, *purge),
         Command::ListFiles => list_files(&cli.esp, &config_path),
         Command::Completions { shell } => {
@@ -74,6 +75,10 @@ fn show(config_path: &Path) -> Result<(), Box<dyn Error>> {
         } else {
             "off"
         }
+    );
+    println!(
+        "fastboot: {}",
+        config.fastboot.as_deref().unwrap_or("off")
     );
     println!();
 
@@ -138,6 +143,14 @@ fn set_logo(config_path: &Path, visible: bool) -> Result<(), Box<dyn Error>> {
         "firmware logo {}",
         if visible { "enabled" } else { "disabled" }
     );
+    Ok(())
+}
+
+fn set_fastboot(config_path: &Path, mode: &str) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+    config.fastboot = Some(mode.to_string());
+    save(config_path, &config)?;
+    println!("fastboot set to {mode}");
     Ok(())
 }
 

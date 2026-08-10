@@ -23,6 +23,7 @@ pub struct Config {
     pub timeout: Option<u32>,
     pub spinner: Option<String>,
     pub logo: Option<bool>,
+    pub fastboot: Option<String>,
     pub entries: Vec<Entry>,
 }
 
@@ -65,6 +66,7 @@ impl Config {
                     "timeout" => config.timeout = value.parse().ok(),
                     "spinner" => config.spinner = Some(value.to_string()),
                     "logo" => config.logo = value.parse().ok(),
+                    "fastboot" => config.fastboot = Some(value.to_string()),
                     _ => {}
                 },
             }
@@ -89,6 +91,9 @@ impl Config {
         }
         if let Some(logo) = self.logo {
             let _ = writeln!(out, "logo = {logo}");
+        }
+        if let Some(fastboot) = &self.fastboot {
+            let _ = writeln!(out, "fastboot = \"{fastboot}\"");
         }
         for entry in &self.entries {
             out.push('\n');

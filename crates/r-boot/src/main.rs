@@ -48,23 +48,43 @@ fn boot_kernel() -> Result<Infallible, &'static str> {
     let image = boot::image_handle();
     let fs = boot::get_image_file_system(image).map_err(|_| "cannot open boot volume")?;
     let mut fs = FileSystem::new(fs);
-    let mut spinner = Spinner::new(
-        menu::configured_spinner_mode(&mut fs),
-        menu::configured_logo_visible(&mut fs),
-    );
-    spinner.tick("Searching for boot entries...");
+    let fastboot = menu::configured_fastboot_mode(&mut fs);
+    let mut spinner = if fastboot.is_active() {
+        Spinner::new(crate::spinner::Mode::Off, false)
+    } else {
+        Spinner::new(
+            menu::configured_spinner_mode(&mut fs),
+            menu::configured_logo_visible(&mut fs),
+        )
+    };
+    if !fastboot.is_active() {
+        spinner.tick("Searching for boot entries...");
+    }
     let mut menu = menu::Menu::load(&mut fs);
-    spinner.clear();
-    spinner.set_mode(menu.spinner_mode());
-    spinner.set_logo_visible(menu.logo_visible());
-    if !menu.entries.is_empty() {
-        let selected = menu.select(&mut fs)?;
-        menu.clear();
+    if !fastboot.is_active() {
+        spinner.clear();
         spinner.set_mode(menu.spinner_mode());
         spinner.set_logo_visible(menu.logo_visible());
+    }
+    if !menu.entries.is_empty() {
+        let selected = if fastboot.is_active() {
+            menu.default_index()
+        } else {
+            menu.select(&mut fs)?
+        };
+        if fastboot == menu::FastbootMode::NextBootOnly {
+            menu::disable_next_boot_fastboot(&mut fs);
+        }
+        if !fastboot.is_active() {
+            menu.clear();
+            spinner.set_mode(menu.spinner_mode());
+            spinner.set_logo_visible(menu.logo_visible());
+        }
         let entry = menu.entries.swap_remove(selected);
         spinner.set_entry_image(entry.image);
-        uefi::println!("Booting {}...", entry.title);
+        if !fastboot.is_active() {
+            uefi::println!("Booting {}...", entry.title);
+        }
         return match entry.kind {
             menu::Kind::Linux => {
                 let kernel_path = menu::path(&entry.kernel)?;
