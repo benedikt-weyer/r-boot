@@ -1,17 +1,20 @@
 //! A minimal interactive shell for browsing the boot filesystem, reachable
-//! from the boot menu via the `t` key. Supports `ls`, `cd`, `pwd`, `clear`,
-//! and `help`.
+//! from the boot menu via the `t` key. Supports `ls`, `lsblk`, `cd`, `pwd`,
+//! `clear`, and `help`.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use uefi::boot;
+use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::fs::{FileSystem, Path, PathBuf, SEPARATOR_STR};
 use uefi::proto::console::text::{Key, ScanCode};
+use uefi::proto::device_path::text::{AllowShortcuts, DisplayOnly};
+use uefi::proto::device_path::DevicePath;
+use uefi::proto::media::block::BlockIO;
 use uefi::{system, CString16};
 
 /// Command names completed at the start of a line, before the first space.
-const COMMANDS: [&str; 7] = ["cd", "clear", "exit", "help", "ls", "pwd", "quit"];
+const COMMANDS: [&str; 8] = ["cd", "clear", "exit", "help", "ls", "lsblk", "pwd", "quit"];
 
 /// Runs the shell until the user types `exit` or presses Escape.
 pub fn run(fs: &mut FileSystem) {
@@ -34,6 +37,7 @@ pub fn run(fs: &mut FileSystem) {
         let argument = argument.trim();
         match command {
             "ls" => list(fs, &cwd, argument),
+            "lsblk" => list_block_devices(),
             "cd" => change_dir(fs, &mut cwd, argument),
             "pwd" => uefi::println!("{}", display_path(&cwd)),
             "clear" => {
@@ -52,6 +56,7 @@ pub fn run(fs: &mut FileSystem) {
 fn print_help() {
     uefi::println!("Available commands:");
     uefi::println!("  ls [path]   list directory contents");
+    uefi::println!("  lsblk       list attached block devices (disks, partitions, USB sticks)");
     uefi::println!("  cd <path>   change the current directory");
     uefi::println!("  pwd         print the current directory");
     uefi::println!("  clear       clear the screen");
@@ -248,6 +253,80 @@ fn list(fs: &mut FileSystem, cwd: &Path, argument: &str) {
             "ls: cannot access {}: no such directory",
             display_path(&target)
         ),
+    }
+}
+
+/// Lists attached block devices, both whole disks and individual partitions
+/// (including the boot partition), noting which ones are removable media
+/// such as USB sticks.
+fn list_block_devices() {
+    let Ok(handles) = boot::find_handles::<BlockIO>() else {
+        uefi::println!("no block devices found");
+        return;
+    };
+    let mut printed = false;
+    for handle in handles {
+        let params = OpenProtocolParams {
+            handle,
+            agent: boot::image_handle(),
+            controller: None,
+        };
+        // SAFETY: opened with `GetProtocol`, which (unlike
+        // `open_protocol_exclusive`) does not disconnect the firmware's own
+        // disk and filesystem drivers from the handle. The interfaces are
+        // only read from within this loop iteration, never mutated or held
+        // past it.
+        let Ok(block_io) =
+            (unsafe { boot::open_protocol::<BlockIO>(params, OpenProtocolAttributes::GetProtocol) })
+        else {
+            continue;
+        };
+        let media = block_io.media();
+        let name = (unsafe {
+            boot::open_protocol::<DevicePath>(params, OpenProtocolAttributes::GetProtocol)
+        })
+        .ok()
+        .and_then(|path| {
+            path.to_string16(DisplayOnly(true), AllowShortcuts(true))
+                .ok()
+        })
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "unknown device".to_string());
+        let scope = if media.is_logical_partition() {
+            "partition"
+        } else {
+            "disk"
+        };
+        let kind = if media.is_removable_media() {
+            "removable"
+        } else {
+            "fixed"
+        };
+        let size = format_size(
+            (media.last_block() + 1).saturating_mul(u64::from(media.block_size())),
+        );
+        uefi::println!("{name}  {scope}, {kind}, {size}");
+        printed = true;
+    }
+    if !printed {
+        uefi::println!("no block devices found");
+    }
+}
+
+/// Formats a byte count as a human-readable size using binary (1024-based)
+/// units, e.g. `15.3 GiB`.
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        alloc::format!("{bytes} {}", UNITS[unit])
+    } else {
+        alloc::format!("{size:.1} {}", UNITS[unit])
     }
 }
 
