@@ -62,6 +62,8 @@ pub enum Command {
     },
     /// Scan the ESP and list kernel/initramfs files found.
     ListFiles,
+    /// Show pki-bundle, bootloader install, and secure boot signing status.
+    Status,
     /// Manage the secure boot signing key (pki-bundle: db.key + db.pem).
     SignKey {
         #[command(subcommand)]

@@ -12,6 +12,7 @@ use clap::{CommandFactory, Parser};
 mod args;
 mod config;
 mod sign_key;
+mod status;
 
 use args::{Cli, Command, SignKeyCommand};
 use config::Config;
@@ -37,6 +38,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         Command::SetFastboot { mode } => set_fastboot(&config_path, mode.as_str()),
         Command::Remove { id, purge } => remove(&cli.esp, &config_path, id, *purge),
         Command::ListFiles => list_files(&cli.esp, &config_path),
+        Command::Status => status::show(&cli.esp),
         Command::SignKey { action } => match action {
             SignKeyCommand::Create { force } => sign_key::create(*force),
             SignKeyCommand::Show => sign_key::show(),

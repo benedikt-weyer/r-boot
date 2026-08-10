@@ -71,6 +71,24 @@ impl RcgenSigningKey for RsaSigningKey {
     }
 }
 
+pub fn key_path() -> std::path::PathBuf {
+    Path::new(PKI_DIR).join(KEY_FILE)
+}
+
+pub fn cert_path() -> std::path::PathBuf {
+    Path::new(PKI_DIR).join(CERT_FILE)
+}
+
+/// Reads the pki-bundle's certificate and returns its raw DER bytes.
+pub fn cert_der() -> Result<Vec<u8>, Box<dyn Error>> {
+    let cert_path = cert_path();
+    let pem_bytes =
+        fs::read(&cert_path).map_err(|e| format!("cannot read {}: {e}", cert_path.display()))?;
+    let (_, pem) = parse_x509_pem(&pem_bytes)
+        .map_err(|e| format!("cannot parse {}: {e}", cert_path.display()))?;
+    Ok(pem.contents)
+}
+
 pub fn create(force: bool) -> Result<(), Box<dyn Error>> {
     if !running_as_root() {
         return Err(
