@@ -10,7 +10,7 @@ use uefi::proto::console::text::{Key, ScanCode};
 use uefi::{system, CString16};
 
 /// Command names completed at the start of a line, before the first space.
-const COMMANDS: [&str; 4] = ["cd", "exit", "ls", "quit"];
+const COMMANDS: [&str; 7] = ["cd", "clear", "exit", "help", "ls", "pwd", "quit"];
 
 /// Runs the shell until the user types `exit` or presses Escape.
 pub fn run(fs: &mut FileSystem) {
@@ -18,7 +18,7 @@ pub fn run(fs: &mut FileSystem) {
     system::with_stdout(|output| {
         let _ = output.clear();
     });
-    uefi::println!("r-boot console. Commands: ls [path], cd <path>, exit. Tab completes.");
+    uefi::println!("r-boot console. Type `help` for a list of commands. Tab completes.");
     loop {
         let prompt = alloc::format!("{cwd}> ");
         uefi::print!("{prompt}");
@@ -34,10 +34,28 @@ pub fn run(fs: &mut FileSystem) {
         match command {
             "ls" => list(fs, &cwd, argument),
             "cd" => change_dir(fs, &mut cwd, argument),
+            "pwd" => uefi::println!("{cwd}"),
+            "clear" => {
+                system::with_stdout(|output| {
+                    let _ = output.clear();
+                });
+            }
+            "help" => print_help(),
             "exit" | "quit" => break,
             _ => uefi::println!("unknown command: {command}"),
         }
     }
+}
+
+/// Prints a summary of the available commands.
+fn print_help() {
+    uefi::println!("Available commands:");
+    uefi::println!("  ls [path]   list directory contents");
+    uefi::println!("  cd <path>   change the current directory");
+    uefi::println!("  pwd         print the current directory");
+    uefi::println!("  clear       clear the screen");
+    uefi::println!("  help        show this message");
+    uefi::println!("  exit, quit  leave the console");
 }
 
 /// Reads one line of input, echoing keystrokes and handling backspace and
