@@ -8,7 +8,8 @@ use core::time::Duration;
 use uefi::boot::{self, EventType, TimerTrigger, Tpl};
 use uefi::fs::{FileSystem, Path, PathBuf};
 use uefi::proto::console::text::{Key, ScanCode};
-use uefi::{CString16, cstr16, system};
+use uefi::runtime::{self, ResetType, VariableAttributes, VariableVendor};
+use uefi::{CString16, Status, cstr16, system};
 
 use crate::spinner::Mode as SpinnerMode;
 use crate::splash::Image as SplashImage;
@@ -170,6 +171,18 @@ impl Menu {
                 Some(Key::Printable(character)) if character == '\r' => {
                     let _ = boot::close_event(timer);
                     return Ok(selected);
+                }
+                Some(Key::Printable(character)) if character == 't' || character == 'T' => {
+                    let _ = boot::close_event(timer);
+                    reboot(ResetType::COLD);
+                }
+                Some(Key::Printable(character)) if character == 's' || character == 'S' => {
+                    let _ = boot::close_event(timer);
+                    reboot(ResetType::SHUTDOWN);
+                }
+                Some(Key::Printable(character)) if character == 'f' || character == 'F' => {
+                    let _ = boot::close_event(timer);
+                    reboot_to_firmware_setup();
                 }
                 Some(Key::Printable(character)) if character == 'c' || character == 'C' => {
                     if self.edit_config(fs, selected)? {
@@ -386,6 +399,7 @@ impl Menu {
             uefi::println!("Page {} of {pages}", page + 1);
         }
         uefi::println!("Use Up/Down and Enter. Left/Right changes pages. Press c to configure.");
+        uefi::println!("Press t to reboot, s to shut down, f for firmware setup.");
     }
 
     fn parse_toml(&mut self, contents: &str) {
@@ -811,6 +825,39 @@ fn append_entry(updated: &mut String, lines: &[&str], entry_id: &str, image: Opt
             }
         }
     }
+}
+
+/// Resets the machine using the firmware's reset service. Never returns.
+fn reboot(reset_type: ResetType) -> ! {
+    runtime::reset(reset_type, Status::SUCCESS, None)
+}
+
+/// Requests that firmware boot straight into its setup UI on the next
+/// reset, then performs that reset. Never returns.
+///
+/// This sets the `OsIndications` bit defined by the UEFI spec
+/// (`EFI_OS_INDICATIONS_BOOT_TO_FW_UI`), preserving any other bits firmware
+/// may already have set.
+fn reboot_to_firmware_setup() -> ! {
+    const BOOT_TO_FW_UI: u64 = 0x1;
+    let name = cstr16!("OsIndications");
+    let vendor = VariableVendor::GLOBAL_VARIABLE;
+    let mut buffer = [0u8; 8];
+    let existing = runtime::get_variable(name, &vendor, &mut buffer)
+        .ok()
+        .and_then(|(data, _)| data.try_into().ok())
+        .map(u64::from_le_bytes)
+        .unwrap_or(0);
+    let attributes = VariableAttributes::NON_VOLATILE
+        | VariableAttributes::BOOTSERVICE_ACCESS
+        | VariableAttributes::RUNTIME_ACCESS;
+    let _ = runtime::set_variable(
+        name,
+        &vendor,
+        attributes,
+        &(existing | BOOT_TO_FW_UI).to_le_bytes(),
+    );
+    reboot(ResetType::COLD)
 }
 
 pub fn path(value: &str) -> Result<PathBuf, &'static str> {
