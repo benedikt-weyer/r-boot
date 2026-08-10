@@ -2,6 +2,7 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt::Write;
 use core::time::Duration;
 
 use uefi::boot::{self, EventType, TimerTrigger, Tpl};
@@ -13,6 +14,12 @@ use crate::spinner::Mode as SpinnerMode;
 use crate::splash::Image as SplashImage;
 
 const ENTRIES_PER_PAGE: usize = 10;
+/// Row where the first entry is printed by `draw`; used to target dirty
+/// updates without redrawing the whole screen.
+const ENTRY_LIST_ROW: usize = 3;
+/// Row of the status line ("Select an entry..."), updated in place each
+/// countdown tick instead of redrawing the whole screen.
+const STATUS_ROW: usize = 1;
 
 #[derive(Debug)]
 pub enum Kind {
@@ -97,8 +104,8 @@ impl Menu {
             .map_err(|_| "cannot set boot-menu timeout")?;
 
         let mut remaining = Some(timeout);
+        self.draw(selected, remaining);
         loop {
-            self.draw(selected, remaining);
             let key_event = system::with_stdin(|input| input.wait_for_key_event())
                 .map_err(|_| "keyboard input is unavailable")?;
             match remaining {
@@ -115,6 +122,7 @@ impl Menu {
                             return Ok(selected);
                         }
                         remaining = Some(left - 1);
+                        self.update_status(remaining);
                         continue;
                     }
                 }
@@ -129,22 +137,29 @@ impl Menu {
             if remaining.is_some() {
                 let _ = boot::set_timer(&timer, TimerTrigger::Cancel);
                 remaining = None;
+                self.update_status(remaining);
             }
             match key {
                 Some(Key::Special(ScanCode::UP)) => {
-                    selected = selected.checked_sub(1).unwrap_or(self.entries.len() - 1)
+                    let previous = selected;
+                    selected = selected.checked_sub(1).unwrap_or(self.entries.len() - 1);
+                    self.move_selection(previous, selected, remaining);
                 }
                 Some(Key::Special(ScanCode::DOWN)) => {
-                    selected = (selected + 1) % self.entries.len()
+                    let previous = selected;
+                    selected = (selected + 1) % self.entries.len();
+                    self.move_selection(previous, selected, remaining);
                 }
                 Some(Key::Special(ScanCode::LEFT)) => {
                     let page = page_for(selected).saturating_sub(1);
                     selected = entry_on_page(selected, self.entries.len(), page);
+                    self.draw(selected, remaining);
                 }
                 Some(Key::Special(ScanCode::RIGHT)) => {
                     let last_page = page_count(self.entries.len()) - 1;
                     let page = core::cmp::min(page_for(selected) + 1, last_page);
                     selected = entry_on_page(selected, self.entries.len(), page);
+                    self.draw(selected, remaining);
                 }
                 Some(Key::Printable(character)) if character == '\r' => {
                     let _ = boot::close_event(timer);
@@ -157,12 +172,47 @@ impl Menu {
                             boot::set_timer(&timer, TimerTrigger::Periodic(Duration::from_secs(1)))
                                 .map_err(|_| "cannot restart boot-menu timeout")?;
                             remaining = Some(timeout);
+                        } else {
+                            remaining = None;
                         }
                     }
+                    self.draw(selected, remaining);
                 }
                 _ => continue,
             }
         }
+    }
+
+    /// Moves the selection marker between two rows on the same page without
+    /// redrawing the rest of the screen. Falls back to a full redraw if the
+    /// move crosses a page boundary.
+    fn move_selection(&self, previous: usize, selected: usize, remaining: Option<u64>) {
+        if page_for(previous) != page_for(selected) {
+            self.draw(selected, remaining);
+            return;
+        }
+        let first = page_for(selected) * ENTRIES_PER_PAGE;
+        self.set_marker(previous - first, ' ');
+        self.set_marker(selected - first, '>');
+    }
+
+    /// Rewrites a single entry row's marker column in place.
+    fn set_marker(&self, row_in_page: usize, marker: char) {
+        system::with_stdout(|output| {
+            let _ = output.set_cursor_position(0, ENTRY_LIST_ROW + row_in_page);
+            let _ = write!(output, "{marker}");
+        });
+    }
+
+    /// Rewrites the countdown status line in place.
+    fn update_status(&self, remaining: Option<u64>) {
+        system::with_stdout(|output| {
+            let _ = output.set_cursor_position(0, STATUS_ROW);
+            let _ = match remaining {
+                Some(seconds) => write!(output, "Select an entry (boots in {seconds}s): "),
+                None => write!(output, "Select an entry:                          "),
+            };
+        });
     }
 
     /// Lets the user persist boot-menu preferences to `boot/r-boot.toml`.
