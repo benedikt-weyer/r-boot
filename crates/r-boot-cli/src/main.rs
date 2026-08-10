@@ -7,39 +7,43 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use clap::{CommandFactory, Parser};
+
 mod args;
 mod config;
 
-use args::{Args, Command};
+use args::{Cli, Command};
 use config::Config;
 
 fn main() {
-    let args = match Args::parse(std::env::args().skip(1)) {
-        Ok(args) => args,
-        Err(err) => {
-            eprintln!("{err}");
-            Args::usage();
-            std::process::exit(1);
-        }
-    };
+    let cli = Cli::parse();
 
-    if let Err(err) = run(&args) {
+    if let Err(err) = run(&cli) {
         eprintln!("r-boot-cli: {err}");
         std::process::exit(1);
     }
 }
 
-fn run(args: &Args) -> Result<(), Box<dyn Error>> {
-    let config_path = args.esp.join("boot").join("r-boot.toml");
+fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
+    let config_path = cli.esp.join("boot").join("r-boot.toml");
 
-    match &args.command {
+    match &cli.command {
         Command::Show => show(&config_path),
-        Command::SetDefault(id) => set_default(&config_path, id),
-        Command::SetTimeout(seconds) => set_timeout(&config_path, *seconds),
-        Command::SetSpinner(mode) => set_spinner(&config_path, mode),
-        Command::SetLogo(visible) => set_logo(&config_path, *visible),
-        Command::Remove { id, purge } => remove(&args.esp, &config_path, id, *purge),
-        Command::ListFiles => list_files(&args.esp, &config_path),
+        Command::SetDefault { id } => set_default(&config_path, id),
+        Command::SetTimeout { seconds } => set_timeout(&config_path, *seconds),
+        Command::SetSpinner { mode } => set_spinner(&config_path, mode.as_str()),
+        Command::SetLogo { visible } => set_logo(&config_path, visible.as_bool()),
+        Command::Remove { id, purge } => remove(&cli.esp, &config_path, id, *purge),
+        Command::ListFiles => list_files(&cli.esp, &config_path),
+        Command::Completions { shell } => {
+            clap_complete::generate(
+                *shell,
+                &mut Cli::command(),
+                "r-boot-cli",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
     }
 }
 

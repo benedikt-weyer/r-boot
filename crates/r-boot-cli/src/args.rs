@@ -1,112 +1,94 @@
 use std::path::PathBuf;
 
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Parser)]
+#[command(
+    name = "r-boot-cli",
+    about = "Inspect and edit r-boot's boot menu configuration"
+)]
+pub struct Cli {
+    /// EFI system partition mount point (matches r-boot-conf-builder's `-d`).
+    #[arg(
+        short = 'd',
+        long = "esp",
+        value_name = "esp-mount-point",
+        default_value = "/boot",
+        global = true
+    )]
+    pub esp: PathBuf,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand)]
 pub enum Command {
     /// Print the current default entry, timeout, and menu entries.
     Show,
     /// Change the default boot entry.
-    SetDefault(String),
+    SetDefault {
+        /// Id of the entry to make the default.
+        id: String,
+    },
     /// Change the menu timeout, in seconds.
-    SetTimeout(u32),
+    SetTimeout {
+        /// Seconds to wait on the menu before booting the default entry.
+        seconds: u32,
+    },
     /// Change spinner output to off, text, or graphical.
-    SetSpinner(String),
+    SetSpinner {
+        /// Spinner mode.
+        mode: SpinnerMode,
+    },
     /// Show or hide the firmware logo while using the graphical spinner.
-    SetLogo(bool),
-    /// Remove a boot entry, optionally deleting its kernel/initramfs files.
-    Remove { id: String, purge: bool },
-    /// Scan the ESP's kernels directory and list kernel/initramfs files found.
+    SetLogo {
+        /// Whether the firmware logo should be shown.
+        visible: OnOff,
+    },
+    /// Remove a boot entry.
+    Remove {
+        /// Id of the entry to remove.
+        id: String,
+        /// Also delete the entry's kernel/initramfs/EFI files from the ESP.
+        #[arg(long)]
+        purge: bool,
+    },
+    /// Scan the ESP and list kernel/initramfs files found.
     ListFiles,
+    /// Print a shell completion script to stdout.
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate a completion script for.
+        shell: clap_complete::Shell,
+    },
 }
 
-pub struct Args {
-    /// EFI system partition mount point (matches r-boot-conf-builder's `-d`).
-    pub esp: PathBuf,
-    pub command: Command,
+#[derive(Clone, Copy, ValueEnum)]
+pub enum SpinnerMode {
+    Off,
+    Text,
+    Graphical,
 }
 
-impl Args {
-    pub fn usage() {
-        eprintln!(
-            "usage: r-boot-cli [-d <esp-mount-point>] <command>\n\
-             \n\
-             commands:\n  \
-             show                    print the current r-boot configuration\n  \
-             set-default <id>        change the default boot entry\n  \
-             set-timeout <seconds>   change the menu timeout\n  \
-             set-spinner <mode>      set spinner: off, text, or graphical\n  \
-             set-logo <on|off>       show or hide the firmware logo\n  \
-             remove <id> [--purge]   remove a boot entry (--purge also deletes\n  \
-             \x20                        its kernel/initramfs files)\n  \
-             list-files              scan the ESP and list kernel/initramfs files"
-        );
-    }
-
-    pub fn parse(mut args: impl Iterator<Item = String>) -> Result<Self, String> {
-        let mut esp = PathBuf::from("/boot");
-        let mut command = None;
-
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "-d" => {
-                    esp = PathBuf::from(
-                        args.next()
-                            .ok_or_else(|| "-d: missing argument".to_string())?,
-                    )
-                }
-                "show" => command = Some(Command::Show),
-                "set-default" => {
-                    let id = args
-                        .next()
-                        .ok_or_else(|| "set-default: missing <id> argument".to_string())?;
-                    command = Some(Command::SetDefault(id));
-                }
-                "set-timeout" => {
-                    let seconds = args
-                        .next()
-                        .ok_or_else(|| "set-timeout: missing <seconds> argument".to_string())?
-                        .parse::<u32>()
-                        .map_err(|e| format!("set-timeout: {e}"))?;
-                    command = Some(Command::SetTimeout(seconds));
-                }
-                "set-spinner" => {
-                    let mode = args
-                        .next()
-                        .ok_or_else(|| "set-spinner: missing <mode> argument".to_string())?;
-                    if !matches!(mode.as_str(), "off" | "text" | "graphical") {
-                        return Err("set-spinner: mode must be off, text, or graphical".to_string());
-                    }
-                    command = Some(Command::SetSpinner(mode));
-                }
-                "set-logo" => {
-                    let visible = match args
-                        .next()
-                        .ok_or_else(|| "set-logo: missing <on|off>".to_string())?
-                        .as_str()
-                    {
-                        "on" => true,
-                        "off" => false,
-                        _ => return Err("set-logo: value must be on or off".to_string()),
-                    };
-                    command = Some(Command::SetLogo(visible));
-                }
-                "remove" => {
-                    let id = args
-                        .next()
-                        .ok_or_else(|| "remove: missing <id> argument".to_string())?;
-                    let purge = match args.next() {
-                        None => false,
-                        Some(flag) if flag == "--purge" => true,
-                        Some(other) => return Err(format!("unrecognized argument: {other}")),
-                    };
-                    command = Some(Command::Remove { id, purge });
-                }
-                "list-files" => command = Some(Command::ListFiles),
-                other => return Err(format!("unrecognized argument: {other}")),
-            }
+impl SpinnerMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpinnerMode::Off => "off",
+            SpinnerMode::Text => "text",
+            SpinnerMode::Graphical => "graphical",
         }
+    }
+}
 
-        Ok(Args {
-            esp,
-            command: command.ok_or("a command is required")?,
-        })
+#[derive(Clone, Copy, ValueEnum)]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+impl OnOff {
+    pub fn as_bool(self) -> bool {
+        matches!(self, OnOff::On)
     }
 }

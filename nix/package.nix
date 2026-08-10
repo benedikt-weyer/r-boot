@@ -3,6 +3,7 @@
   rust,
   makeRustPlatform,
   makeWrapper,
+  installShellFiles,
   efibootmgr,
   util-linux,
 }:
@@ -32,7 +33,10 @@ rustPlatform.buildRustPackage {
   # UEFI COFF linker doesn't understand.
   auditable = false;
 
-  nativeBuildInputs = [ makeWrapper ];
+  nativeBuildInputs = [
+    makeWrapper
+    installShellFiles
+  ];
 
   # rustPlatform's own cargoBuildHook always targets the derivation's
   # stdenv.hostPlatform (nixpkgs' cross machinery), which has no bearing on
@@ -63,6 +67,13 @@ rustPlatform.buildRustPackage {
     wrapProgram $out/bin/r-boot-conf-builder \
       --prefix PATH : ${lib.makeBinPath [ efibootmgr util-linux ]}
     runHook postInstall
+  '';
+
+  postInstall = ''
+    installShellCompletion --cmd r-boot-cli \
+      --bash <($out/bin/r-boot-cli completions bash) \
+      --fish <($out/bin/r-boot-cli completions fish) \
+      --zsh <($out/bin/r-boot-cli completions zsh)
   '';
 
   meta = {

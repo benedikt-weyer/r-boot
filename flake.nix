@@ -72,6 +72,8 @@
         # bootloader package.
         r-boot-cli = pkgs.runCommand "r-boot-cli" { } ''
           install -D ${r-boot}/bin/r-boot-cli $out/bin/r-boot-cli
+          mkdir -p $out/share
+          cp -r ${r-boot}/share/. $out/share/
         '';
 
         # `nix build .#nixos-image` (wrapped by `scripts/build-nixos-image`)
