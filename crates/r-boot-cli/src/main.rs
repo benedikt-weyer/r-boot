@@ -4,6 +4,7 @@
 
 use std::error::Error;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 mod args;
@@ -37,6 +38,7 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
         Command::SetTimeout(seconds) => set_timeout(&config_path, *seconds),
         Command::SetSpinner(mode) => set_spinner(&config_path, mode),
         Command::SetLogo(visible) => set_logo(&config_path, *visible),
+        Command::Remove { id, purge } => remove(&args.esp, &config_path, id, *purge),
     }
 }
 
@@ -131,6 +133,63 @@ fn set_logo(config_path: &Path, visible: bool) -> Result<(), Box<dyn Error>> {
         "firmware logo {}",
         if visible { "enabled" } else { "disabled" }
     );
+    Ok(())
+}
+
+fn remove(esp: &Path, config_path: &Path, id: &str, purge: bool) -> Result<(), Box<dyn Error>> {
+    let mut config = load(config_path)?;
+
+    let Some(index) = config.entries.iter().position(|entry| entry.id == id) else {
+        let known: Vec<&str> = config.entries.iter().map(|e| e.id.as_str()).collect();
+        return Err(format!(
+            "no entry with id \"{id}\" (known ids: {})",
+            known.join(", ")
+        )
+        .into());
+    };
+    let entry = config.entries.remove(index);
+
+    if config.default.as_deref() == Some(id) {
+        config.default = None;
+    }
+
+    save(config_path, &config)?;
+    println!("removed entry \"{id}\"");
+
+    if purge {
+        let mut files: Vec<&str> = entry.initrd.iter().map(String::as_str).collect();
+        if let Some(linux) = &entry.linux {
+            files.push(linux);
+        }
+        if let Some(efi) = &entry.efi {
+            files.push(efi);
+        }
+        for file in files {
+            let path = resolve_esp_path(esp, file);
+            if let Err(err) = remove_boot_file(&path) {
+                eprintln!("r-boot-cli: cannot remove {}: {err}", path.display());
+            } else {
+                println!("removed {}", path.display());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolves a config-file path like `/boot/nixos/kernel-foo` (rooted at the
+/// ESP, matching r-boot's own path handling) to its real filesystem location.
+fn resolve_esp_path(esp: &Path, entry_path: &str) -> PathBuf {
+    esp.join(entry_path.trim_start_matches('/'))
+}
+
+/// Kernels/initrds are installed read-only (see r-boot-conf-builder); undo
+/// that before removing so the unlink doesn't get rejected.
+fn remove_boot_file(path: &Path) -> Result<(), Box<dyn Error>> {
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(perms.mode() | 0o200);
+    fs::set_permissions(path, perms)?;
+    fs::remove_file(path)?;
     Ok(())
 }
 

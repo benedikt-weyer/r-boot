@@ -11,6 +11,8 @@ pub enum Command {
     SetSpinner(String),
     /// Show or hide the firmware logo while using the graphical spinner.
     SetLogo(bool),
+    /// Remove a boot entry, optionally deleting its kernel/initramfs files.
+    Remove { id: String, purge: bool },
 }
 
 pub struct Args {
@@ -29,7 +31,9 @@ impl Args {
              set-default <id>        change the default boot entry\n  \
              set-timeout <seconds>   change the menu timeout\n  \
              set-spinner <mode>      set spinner: off, text, or graphical\n  \
-             set-logo <on|off>       show or hide the firmware logo"
+             set-logo <on|off>       show or hide the firmware logo\n  \
+             remove <id> [--purge]   remove a boot entry (--purge also deletes\n  \
+             \x20                        its kernel/initramfs files)"
         );
     }
 
@@ -80,6 +84,17 @@ impl Args {
                         _ => return Err("set-logo: value must be on or off".to_string()),
                     };
                     command = Some(Command::SetLogo(visible));
+                }
+                "remove" => {
+                    let id = args
+                        .next()
+                        .ok_or_else(|| "remove: missing <id> argument".to_string())?;
+                    let purge = match args.next() {
+                        None => false,
+                        Some(flag) if flag == "--purge" => true,
+                        Some(other) => return Err(format!("unrecognized argument: {other}")),
+                    };
+                    command = Some(Command::Remove { id, purge });
                 }
                 other => return Err(format!("unrecognized argument: {other}")),
             }
